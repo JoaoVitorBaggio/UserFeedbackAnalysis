@@ -12,5 +12,7 @@ build/
 htmlcov/
 
 # Corpus e corridas ficam fora do git.
-data/
-runs/
+# Âncora na raiz: `data/` sem barra também ignora o pacote
+# src/user_feedback_analysis/data/.
+/data/
+/runs/
