@@ -63,7 +63,7 @@ O card declara o corpus em inglês. O caminho mínimo não traduz.
 | Métrica de comparação | Macro F1; também precisão e recall |
 | Treino | ~10 mil por classe; sem sinal = amostra aleatória do pool (~87%) |
 | Teste | 12% estratificado pelas três classes, separado antes da amostra de treino; o lado de teste fica na distribuição real |
-| Sementes | Três, as mesmas nas quatro corridas |
+| Sementes | 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas |
 | Baseline principal | `cardiffnlp/twitter-roberta-base-sentiment-latest`. Mapa: positive → SAT, negative → DSAT, neutral → sem sinal. O descompasso Twitter versus feedback de assistente é intencional e faz parte da pergunta |
 | Baseline alternativo | `j-hartmann/sentiment-roberta-large-english-3-classes` (três classes no card: negative, neutral, positive). Mesmo mapa. Não é a corrida principal |
 | LLM | Llama 3.1 8B Instruct, via Groq ou OpenRouter |
@@ -91,4 +91,4 @@ Chatbot de produção. Alinhar um modelo com pares de preferência — o artigo 
 6. Número de demonstrações do few-shot (quantos exemplos entram no prompt). Isso não é o K=3 já fechado: K=3 é o número de inferências por exemplo, agregadas por voto majoritário.
 7. Como resumir os três macro F1, um por semente. Cada semente entra no registro. Média ou outro agregado não foi fechado.
 
-Os três inteiros das sementes entram no manifesto quando a amostra for tirada.
+As três sementes do protocolo são 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. Cada semente entra no manifesto quando a amostra for tirada.
