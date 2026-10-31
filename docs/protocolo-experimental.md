@@ -5,26 +5,29 @@ Nada disto foi executado. Onde faltar número, o texto diz **a definir**. Estima
 ## Experimento mínimo
 
 1. Três braços no espaço `{SAT, DSAT, sem sinal}`.
-2. Um harness. Três backends. A comparação usa o mesmo hold-out e as mesmas métricas.
+2. Um harness. As quatro corridas abaixo entram nele. A comparação usa o mesmo hold-out e as mesmas métricas.
 3. Treino balanceado, cerca de 10 mil exemplos por classe, montado só depois de o teste estar separado. Os cerca de 10 mil de **sem sinal** são amostra aleatória do pool sem sinal (~87%), não o pool inteiro e não um recorte curado, salvo especificação posterior.
 4. Teste na distribuição real.
 5. Loss do braço núcleo: cross-entropy categórica de 3 classes. Ver [funcao-de-loss.md](funcao-de-loss.md).
 
-O primeiro experimento a rodar é o classificador de sentimento genérico pré-treinado (baseline): é o braço mais barato e a referência para os outros dois (Transformer fine-tunado e LLM zero/few-shot).
+O primeiro experimento a rodar é o classificador de sentimento genérico pré-treinado (baseline): é o braço mais barato e a referência para os outros (Transformer fine-tunado, LLM zero-shot e LLM few-shot).
 
-## Os três braços
+## Experimentos
 
-| # | Nome | O que é | Dono |
-| --- | --- | --- | --- |
-| 1 | Baseline | Classificador de sentimento genérico, já pré-treinado, sem treino neste corpus | João Vítor Baggio |
-| 2 | Núcleo | Transformer da família BERT/RoBERTa, fine-tunado neste rótulo | Nikolas Chemale (treino / fine-tuning, só este braço) |
-| 3 | Comparação | LLM em zero-shot ou few-shot, sem gradiente neste corpus | João Vítor Baggio |
+Quatro corridas, nesta ordem. O enquadramento de três braços (baseline, Transformer, LLM) continua no restante do protocolo; zero-shot e few-shot são experimentos separados.
+
+1. Classificador de sentimento genérico pré-treinado (baseline). Roda primeiro. Dono: João Vítor Baggio.
+2. Transformer fine-tunado (família BERT/RoBERTa). Dono: Nikolas Chemale.
+3. LLM zero-shot. Dono: João Vítor Baggio.
+4. LLM few-shot. Dono: João Vítor Baggio.
+
+João Vítor Baggio também é dono do harness inicial, que avalia as quatro corridas.
 
 O checkpoint de cada braço está **a definir**. O baseline projeta a saída nativa para `{SAT, DSAT, sem sinal}` dentro do harness. Hipótese de trabalho do mapa: positivo → SAT, negativo → DSAT, neutro → sem sinal. Se o checkpoint escolhido não tiver neutro, o mapa fica **a definir** antes da corrida. Não há colapso silencioso para duas classes.
 
 ## Harness
 
-Um código de avaliação. Três backends. Cada backend recebe o hold-out e devolve um rótulo em `{SAT, DSAT, sem sinal}`.
+Um código de avaliação. As quatro corridas entram nele. Cada uma recebe o hold-out e devolve um rótulo em `{SAT, DSAT, sem sinal}`.
 
 O harness calcula precisão, recall e **macro F1** (por classe quando o relatório pedir). F1 contado fora desse código não entra na tabela.
 
