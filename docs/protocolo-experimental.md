@@ -5,25 +5,31 @@ Nada disto foi executado. Onde faltar número, o texto diz **a definir**. Estima
 ## Experimento mínimo
 
 1. Três braços no espaço `{SAT, DSAT, sem sinal}`.
-2. Um harness. As quatro corridas abaixo entram nele. A comparação usa o mesmo hold-out e as mesmas métricas.
+2. Um harness. As quatro corridas abaixo entram nele. Em cada semente, a comparação usa o mesmo hold-out e as mesmas métricas.
 3. Treino balanceado, cerca de 10 mil exemplos por classe, montado só depois de o teste estar separado. Os cerca de 10 mil de **sem sinal** são amostra aleatória do pool sem sinal (~87%), não o pool inteiro e não um recorte curado, salvo especificação posterior.
-4. Teste na distribuição real.
-5. Loss do braço núcleo: cross-entropy categórica de 3 classes. Ver [funcao-de-loss.md](funcao-de-loss.md).
+4. Teste na distribuição real: 12% estratificado pelas três classes, separado antes da amostra de treino. O teste não é rebalanceado.
+5. Loss do braço núcleo: cross-entropy categórica de 3 classes. BCE binária fica só como ablação ou apêndice. Ver [funcao-de-loss.md](funcao-de-loss.md).
 
 O primeiro experimento a rodar é o classificador de sentimento genérico pré-treinado (baseline): é o braço mais barato e a referência para os outros (Transformer fine-tunado, LLM zero-shot e LLM few-shot).
 
 ## Os quatro experimentos
 
-Quatro corridas, nesta ordem. O enquadramento de três braços (baseline, Transformer, LLM) continua no restante do protocolo; zero-shot e few-shot não se fundem numa linha só.
+Quatro corridas, nesta ordem, fechada na call de 31/10/2026. O enquadramento de três braços (baseline, Transformer, LLM) continua no restante do protocolo; zero-shot e few-shot não se fundem numa linha só.
 
 1. Baseline de sentimento genérico. Roda primeiro. Dono: João Vítor Baggio.
-2. Transformer fine-tunado (família BERT/RoBERTa). Dono: Nikolas Chemale.
+2. Transformer fine-tunado. Dono: Nikolas Chemale.
 3. LLM zero-shot (corrida separada). Dono: João Vítor Baggio.
 4. LLM few-shot (corrida separada). Dono: João Vítor Baggio.
 
 João Vítor Baggio também é dono do harness inicial, que avalia as quatro corridas.
 
-O checkpoint de cada braço está **a definir**. O baseline projeta a saída nativa para `{SAT, DSAT, sem sinal}` dentro do harness. Hipótese de trabalho do mapa: positivo → SAT, negativo → DSAT, neutro → sem sinal. Se o checkpoint escolhido não tiver neutro, o mapa fica **a definir** antes da corrida. Não há colapso silencioso para duas classes.
+Checkpoints fechados em 31/10/2026. Nenhum id abaixo é resultado, e não há métrica medida neste repositório.
+
+**Baseline.** Checkpoint principal: `cardiffnlp/twitter-roberta-base-sentiment-latest`. O harness projeta a saída para `{SAT, DSAT, sem sinal}` com o mapa positivo → SAT, negativo → DSAT, neutro → sem sinal. O card é de sentimento no Twitter; o corpus é feedback sobre resposta de assistente. Esse descompasso de domínio é intencional e faz parte da pergunta de pesquisa. Alternativa de três classes, se a corrida principal pedir contraste: `j-hartmann/sentiment-roberta-large-english-3-classes` (negative, neutral, positive no card do Hub, consulta em 31/10/2026), com o mesmo mapa. Checkpoint sem neutro não entra: o mapa ficaria **a definir** e não há colapso para duas classes.
+
+**Transformer.** Encoder: BERT-base multilíngue ou E5-base. Os dois são aceitáveis; o id usado na corrida entra no manifesto. O loop de treino é de Nikolas Chemale, na RTX 4060 8GB. A loss é a cross-entropy categórica de 3 classes.
+
+**LLM (zero-shot e few-shot).** Modelo: Llama 3.1 8B Instruct, via Groq ou OpenRouter. O id da API entra no JSON da corrida. Cada exemplo recebe K=3 inferências; o rótulo entregue ao harness é o voto majoritário (a moda). Um placar 2–1 tem moda. Três rótulos diferentes não têm moda única: o desempate está **a definir**. Temperatura 0 não é exigida. O número de demonstrações do few-shot continua **a definir**. O teste não entra no prompt.
 
 ## Harness
 
@@ -46,12 +52,16 @@ Só o braço 2 otimiza loss neste corpus. O baseline chega pré-treinado. O LLM 
 
 Ordem fechada:
 
-1. Separar o teste na distribuição real. Tamanho: **a definir**. Disjunto do resto.
+1. Separar o teste: 12% dos exemplos elegíveis, estratificado pelas três classes. Disjunto do resto. A amostra de treino só começa depois dessa separação. O teste não é rebalanceado: a estratificação preserva a mistura de classes (distribuição real).
 2. Do que sobrou, montar o treino balanceado: cerca de 10 mil SAT, cerca de 10 mil DSAT, cerca de 10 mil sem sinal.
 3. Os cerca de 10 mil **sem sinal** saem por amostra aleatória do pool sem sinal (~87% dos dados). Não é o pool inteiro. Não é subconjunto escolhido à mão, salvo especificação posterior.
 4. Validação: **a definir**, tirada do lado de treino. O teste oficial não entra em early stopping.
 
-A semente da amostra aleatória fica registrada. O valor está **a definir**. A unidade do split (conversa ou turno) também está **a definir** na inspeção do arquivo; a preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa.
+Três sementes, as mesmas nas quatro corridas. Cada semente redesenha a partição e, no Transformer, o treino. O hold-out de uma semente é o mesmo nos quatro braços. Os inteiros ficam no manifesto. O harness registra cada semente; agregar os três macro F1 não foi fechado.
+
+A unidade do split (conversa ou turno) está **a definir** na inspeção do arquivo. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Se a unidade for a conversa, não cortar conversa prevalece sobre a fração exata: o tamanho realizado pode passar de 12%. A estratificação continua o alvo.
+
+O splitter deste repositório ainda recebe uma contagem inteira e não estratifica. A fração de 12% estratificada é a regra do protocolo; o código não a implementa neste momento.
 
 ## Métricas (hold-out)
 
@@ -61,7 +71,7 @@ A semente da amostra aleatória fica registrada. O valor está **a definir**. A 
 | Precisão | No agregado do harness; por classe se útil |
 | Recall | No agregado do harness; por classe se útil |
 
-Acurácia não decide a comparação: o teste é desbalanceado. Sementes de treino: **a definir**. O marco de 4/11/2026 é a corrida do baseline.
+Acurácia não decide a comparação: o teste é desbalanceado. Sementes: três, compartilhadas pelos quatro braços. O marco de 4/11/2026 é a corrida do baseline.
 
 ## Divisão de tarefas
 
@@ -71,7 +81,7 @@ Acurácia não decide a comparação: o teste é desbalanceado. Sementes de trei
 | LLM zero-shot (corrida separada) | João Vítor Baggio |
 | LLM few-shot (corrida separada) | João Vítor Baggio |
 | Harness inicial compartilhado (precisão, recall, macro F1) | João Vítor Baggio |
-| Fine-tuning / treino do Transformer (braço núcleo, só isso) | Nikolas Chemale |
+| Fine-tuning / treino do Transformer (braço núcleo, só isso), RTX 4060 8GB, encoder BERT-base multilíngue ou E5-base | Nikolas Chemale |
 | Slides | Grupo 16 |
 | Artigo SBC (8+ páginas) | Grupo 16, depois dos slides |
 

@@ -18,7 +18,7 @@ Três classes: SAT, DSAT, sem sinal. Uma distribuição sobre o espaço inteiro.
 
 ## Decisão
 
-A loss de treino do Transformer fine-tunado é a cross-entropy categórica com 3 classes (SAT, DSAT, sem sinal); o mesmo espaço de rótulo vale para a avaliação dos três braços.
+A loss de treino do Transformer fine-tunado é a cross-entropy categórica com 3 classes (SAT, DSAT, sem sinal); o mesmo espaço de rótulo vale para a avaliação dos três braços. A call de 31/10/2026 reafirmou este quadro. BCE binária permanece só ablação ou apêndice.
 
 | Item | Escolha |
 | --- | --- |

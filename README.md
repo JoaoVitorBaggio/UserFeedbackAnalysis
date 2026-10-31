@@ -41,7 +41,7 @@ A corrida real do baseline e a carga pelo Hub pedem o resto:
 python -m pip install -r requirements.txt
 ```
 
-CPU basta para a inferência do baseline. GPU é opcional.
+CPU basta para a inferência do baseline. GPU é opcional nessa corrida. O treino do Transformer, de Nikolas, fica na RTX 4060 8GB; ver a seção abaixo.
 
 ## Harness
 
@@ -77,10 +77,10 @@ Filtro padrão: `Role == User`. É hipótese de trabalho, porque a pergunta é s
 
 Ordem da partição, a do protocolo:
 
-1. Teste na distribuição dos exemplos elegíveis. `--test-size` é obrigatório. O tamanho está a definir; o valor fica no JSON da corrida.
-2. Validação, se `--val-size` vier. Também a definir. Sai do que restou depois do teste, nunca do teste.
+1. Teste na distribuição dos exemplos elegíveis. O protocolo fecha 12% estratificado pelas três classes, separado antes do treino balanceado. `--test-size` no código continua contagem inteira: o splitter ainda não recebe fração nem estratifica. A contagem que realiza os 12% fica no JSON da corrida.
+2. Validação, se `--val-size` vier. O tamanho continua a definir. Sai do que restou depois do teste, nunca do teste.
 3. Treino balanceado, `--per-class` (padrão 10000). Sem sinal é amostra aleatória do pool que sobrou, não o pool inteiro.
-4. `--seed` é obrigatória e entra no manifesto. O valor está a definir.
+4. O protocolo usa três sementes, as mesmas nas quatro corridas. `--seed` continua uma semente por invocação e entra no manifesto.
 
 Em `conversation`, o teste realizado pode passar do `--test-size` para não cortar conversa. `--strict-per-class` falha se alguma classe ficar abaixo do alvo. Sem essa flag, o manifesto registra o déficit.
 
@@ -99,7 +99,7 @@ O mesmo `SplitConfig` (semente, tamanho de teste, `per_class`, unidade, papel) �
 
 ## Baseline
 
-Checkpoint: `cardiffnlp/twitter-roberta-base-sentiment-latest` (RoBERTa-base, três saídas no card: Negative, Neutral, Positive). Mapa, a hipótese do protocolo:
+Checkpoint principal: `cardiffnlp/twitter-roberta-base-sentiment-latest` (RoBERTa-base, três saídas no card: Negative, Neutral, Positive). O card é de Twitter; o corpus é feedback de assistente. Esse descompasso é intencional e faz parte da pergunta. Alternativa de três classes, não é a corrida principal: `j-hartmann/sentiment-roberta-large-english-3-classes` (negative, neutral, positive), com o mesmo mapa. Mapa do protocolo:
 
 | Saída do modelo | Classe |
 | --- | --- |
@@ -133,13 +133,13 @@ python -m user_feedback_analysis.baseline.run \
   --output runs/baseline.json
 ```
 
-`TAMANHO` e `SEMENTE` estão a definir. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`.
+`TAMANHO` é a contagem inteira que realiza os 12% do protocolo; `SEMENTE` é uma das três sementes. As duas entram no JSON. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`.
 
 GTX 1060 6GB: a inferência deste RoBERTa-base em fp32 costuma caber com `--device cuda --batch-size 8`. O pico de VRAM não foi medido aqui. Se a placa recusar, use CPU ou baixe o batch.
 
 ## LLM
 
-O texto classificado é o `Content` do turno do usuário, o mesmo texto do baseline. O prompt, em inglês, pede um rótulo em `{SAT, DSAT, sem sinal}`. Few-shot amostra `k` exemplos só do treino, em rodízio pelas três classes. `k` está a definir. O teste não entra no prompt.
+O texto classificado é o `Content` do turno do usuário, o mesmo texto do baseline. O prompt, em inglês, pede um rótulo em `{SAT, DSAT, sem sinal}`. Few-shot amostra `k` exemplos só do treino, em rodízio pelas três classes. Esse `k` (quantas demonstrações entram no prompt) continua a definir. Não é o K=3 do protocolo: K=3 é o número de inferências por exemplo. O teste não entra no prompt.
 
 ```bash
 python -m user_feedback_analysis.llm.run \
@@ -156,10 +156,10 @@ Chamada real:
 | Variável | Papel |
 | --- | --- |
 | `OPENAI_API_KEY` | obrigatória |
-| `LLM_MODEL` | obrigatória; o protocolo deixa o modelo a definir |
+| `LLM_MODEL` | obrigatória. O protocolo fecha Llama 3.1 8B Instruct, via Groq ou OpenRouter; o id da API vai nesta variável |
 | `OPENAI_BASE_URL` | opcional; padrão `https://api.openai.com/v1` |
 
-Sem `OPENAI_API_KEY`, a corrida cai em dry-run e não chama a rede. Chave presente sem `LLM_MODEL` é erro, para não gravar mock no lugar de uma chamada que parecia real. `--live` exige as duas. `--dry-run` não chama a rede mesmo com chave. Temperatura da chamada real: 0.
+Sem `OPENAI_API_KEY`, a corrida cai em dry-run e não chama a rede. Chave presente sem `LLM_MODEL` é erro, para não gravar mock no lugar de uma chamada que parecia real. `--live` exige as duas. `--dry-run` não chama a rede mesmo com chave. O protocolo da chamada real é K=3 inferências por exemplo, agregadas por voto majoritário; temperatura 0 não é exigida. O módulo `llm/` ainda envia uma chamada com temperatura 0.
 
 Cada texto no prompt é cortado em `--max-chars` (padrão 4000; `0` desliga). O corte fica no JSON (`n_test_truncated`, `n_demo_truncated`). Não é decisão do protocolo. Turnos do corpus podem ser longos; o card chega a centenas de milhares de caracteres.
 
@@ -186,7 +186,7 @@ from user_feedback_analysis.transformer import (
 - `build_loss()`: `CrossEntropyLoss` sem peso. Peso de classe é recusado. A decisão está em [docs/funcao-de-loss.md](docs/funcao-de-loss.md).
 - `SatisfactionModel.forward` e `train_transformer` levantam `NotImplementedError`.
 
-O teste oficial não entra no treino nem no early stopping. A variante do encoder está a definir. Na GTX 1060 6GB, encoder base com batch pequeno e sequência curta é limite de hardware, não hiperparâmetro medido.
+O teste oficial não entra no treino nem no early stopping. O encoder fechado é BERT-base multilíngue ou E5-base; qualquer um dos dois serve, e o id entra no manifesto. A GPU do treino é a RTX 4060 8GB de Nikolas. Batch e comprimento de sequência nesta placa continuam limite de hardware, não hiperparâmetro medido; o pico de VRAM não foi medido aqui.
 
 O relatório final do braço passa pelo mesmo `evaluate`.
 
