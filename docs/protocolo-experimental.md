@@ -57,7 +57,7 @@ Ordem fechada:
 3. Os cerca de 10 mil **sem sinal** saem por amostra aleatória do pool sem sinal (~87% dos dados). Não é o pool inteiro. Não é subconjunto escolhido à mão, salvo especificação posterior.
 4. Validação: **a definir**, tirada do lado de treino. O teste oficial não entra em early stopping.
 
-Três sementes, as mesmas nas quatro corridas. Cada semente redesenha a partição e, no Transformer, o treino. O hold-out de uma semente é o mesmo nos quatro braços. Os inteiros ficam no manifesto. O harness registra cada semente; agregar os três macro F1 não foi fechado.
+As três sementes do protocolo são 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. Cada semente redesenha a partição e, no Transformer, o treino. O hold-out de uma semente é o mesmo nos quatro braços. Cada semente entra no manifesto da corrida. O harness registra cada semente; agregar os três macro F1 não foi fechado.
 
 A unidade do split (conversa ou turno) está **a definir** na inspeção do arquivo. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Se a unidade for a conversa, não cortar conversa prevalece sobre a fração exata: o tamanho realizado pode passar de 12%. A estratificação continua o alvo.
 
@@ -71,7 +71,7 @@ O código implementa essa fração em `--test-fraction` (padrão 0.12 quando `--
 | Precisão | No agregado do harness; por classe se útil |
 | Recall | No agregado do harness; por classe se útil |
 
-Acurácia não decide a comparação: o teste é desbalanceado. Sementes: três, compartilhadas pelos quatro braços. O marco de 4/11/2026 é a corrida do baseline.
+Acurácia não decide a comparação: o teste é desbalanceado. Sementes do protocolo: 0, 1 e 2, nesta ordem, compartilhadas pelos quatro braços. O marco de 4/11/2026 é a corrida do baseline.
 
 ## Divisão de tarefas
 

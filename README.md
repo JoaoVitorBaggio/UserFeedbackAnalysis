@@ -80,7 +80,7 @@ Ordem da partição, a do protocolo:
 1. Teste na distribuição dos exemplos elegíveis, separado antes do treino balanceado. `--test-fraction 0.12` é o protocolo: estratificado pelas três classes, sem rebalancear o teste. Se `--test-size` e `--test-fraction` faltarem, a fração 0.12 entra sozinha. `--test-size` continua contagem inteira sem estratificar, para smoke e fixtures. Os dois flags são exclusivos. O JSON grava fração ou contagem, semente, `stratified`, a regra e as contagens realizadas por classe (`test_class_counts`, `test_class_targets`).
 2. Validação, se `--val-size` vier. O tamanho continua em aberto. É uma contagem inteira do que restou depois do teste, nunca do teste.
 3. Treino balanceado, `--per-class` (padrão 10000). Sem sinal é amostra aleatória do pool que sobrou, não o pool inteiro.
-4. O protocolo usa três sementes, as mesmas nas quatro corridas. `--seed` é uma semente por invocação e entra no manifesto. Quem chama repete a corrida; este repositório não escolhe os três inteiros.
+4. O protocolo usa as sementes 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. `--seed` é uma semente por invocação e entra no manifesto. Quem chama repete a corrida, uma invocação para cada inteiro.
 
 Em `turn`, cada classe contribui `round half-up(n_classe × fração)` exemplos. Em `conversation`, a conversa inteira muda de lado: o realizado pode passar de 12%, e o manifesto registra alvo contra realizado. `--strict-per-class` falha se alguma classe ficar abaixo do alvo de treino. Sem essa flag, o manifesto registra o déficit.
 
@@ -125,15 +125,17 @@ python -m user_feedback_analysis.baseline.run \
 Corrida com o checkpoint, CPU:
 
 ```bash
-python -m user_feedback_analysis.baseline.run \
-  --hf \
-  --test-fraction 0.12 --per-class 10000 --seed SEMENTE \
-  --strict-per-class \
-  --device cpu --batch-size 8 \
-  --output runs/baseline.json
+for seed in 0 1 2; do
+  python -m user_feedback_analysis.baseline.run \
+    --hf \
+    --test-fraction 0.12 --per-class 10000 --seed "$seed" \
+    --strict-per-class \
+    --device cpu --batch-size 8 \
+    --output "runs/baseline-seed-${seed}.json"
+done
 ```
 
-`SEMENTE` é uma das três sementes do protocolo. O inteiro entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Repita a corrida para cada semente; os três inteiros não estão escolhidos neste repositório. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
+As sementes do protocolo são 0, 1 e 2, nesta ordem, nas quatro corridas. O laço acima faz uma invocação por semente. O inteiro entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Cada semente grava o próprio arquivo em `runs/`; `runs/` fica de fora do git. Nenhum desses comandos foi executado. Não há macro F1 neste repositório. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
 
 GTX 1060 6GB: a inferência deste RoBERTa-base em fp32 costuma caber com `--device cuda --batch-size 8`. O pico de VRAM não foi medido aqui. Se a placa recusar, use CPU ou baixe o batch.
 
