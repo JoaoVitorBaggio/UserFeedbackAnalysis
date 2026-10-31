@@ -7,7 +7,8 @@ from user_feedback_analysis.data.load import load_jsonl
 from user_feedback_analysis.data.split import SplitConfig, make_splits
 from user_feedback_analysis.harness import evaluate
 from user_feedback_analysis.labels import Label
-from user_feedback_analysis.llm.client import classify_text, resolve_dry_run
+from user_feedback_analysis.llm.client import classify_text, classify_votes, resolve_dry_run
+from user_feedback_analysis.llm.vote import majority_vote
 from user_feedback_analysis.llm.parse import parse_label
 from user_feedback_analysis.llm.prompts import build_prompt, clip_text
 from user_feedback_analysis.llm.run import main
@@ -102,6 +103,7 @@ def test_live_client_parses_a_fake_response(monkeypatch):
             ).encode("utf-8")
 
     def _urlopen(request, timeout=0):
+        captured["calls"] = int(captured.get("calls", 0)) + 1
         captured["url"] = request.full_url
         captured["auth"] = request.get_header("Authorization")
         captured["body"] = json.loads(request.data.decode("utf-8"))
@@ -118,11 +120,24 @@ def test_live_client_parses_a_fake_response(monkeypatch):
         timeout=5,
     )
     assert label is Label.DSAT
+    assert captured["calls"] == 3
     assert captured["url"] == "http://localhost:9/v1/chat/completions"
     assert captured["auth"] == "Bearer sk-test"
-    assert captured["body"]["temperature"] == 0
+    assert captured["body"]["temperature"] == 0.7
     assert captured["body"]["model"] == "dummy-model"
     assert "sk-test" not in captured["body"]["messages"][1]["content"]
+    classify_text(
+        "This is still wrong, fix it.",
+        [],
+        dry_run=False,
+        model="dummy-model",
+        max_chars=100,
+        timeout=5,
+        k=1,
+        temperature=0,
+    )
+    assert captured["body"]["temperature"] == 0
+    assert captured["calls"] == 4
 
 
 def test_llm_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypatch):
@@ -160,6 +175,15 @@ def test_llm_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypatch):
     assert payload["official_result"] is False
     assert payload["model"] == "mock"
     assert payload["k"] == 3
+    assert payload["inference_k"] == 3
+    assert payload["vote"] == "majority"
+    assert payload["tie_break"] == "first_inference"
+    assert payload["temperature"] == 0.7
+    assert payload["n_tie_breaks"] == 0
+    assert payload["split"]["stratified"] is False
+    assert payload["split"]["seed"] == 0
+    assert all(len(votes) == 3 for votes in payload["inference_votes"])
+    assert len(payload["inference_votes"]) == len(payload["predictions"])
     assert set(payload["demonstration_ids"]).isdisjoint(payload["split"]["test_ids"])
     assert set(payload["demonstration_ids"]) <= set(payload["split"]["train_ids"])
     report = evaluate(
@@ -199,6 +223,115 @@ def test_zero_shot_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypat
     assert payload["dry_run"] is True
     assert payload["k"] == 0
     assert payload["demonstration_ids"] == []
+
+
+def test_majority_vote_and_first_inference_tie():
+    assert majority_vote([Label.SAT, Label.DSAT, Label.DSAT]) == (Label.DSAT, "majority")
+    assert majority_vote([Label.SAT, Label.SAT, Label.SAT]) == (Label.SAT, "majority")
+    assert majority_vote([Label.DSAT, Label.SAT, Label.NO_SIGNAL]) == (
+        Label.DSAT,
+        "first_inference",
+    )
+    assert majority_vote([Label.DSAT, Label.SAT, Label.SAT, Label.DSAT]) == (
+        Label.DSAT,
+        "first_inference",
+    )
+
+
+def test_k3_uses_a_mock_client_and_does_not_touch_the_network():
+    calls: list[float] = []
+
+    def complete(prompt: str, *, model: str, timeout: float, temperature: float) -> str:
+        calls.append(temperature)
+        return ("SAT", "DSAT", "DSAT")[len(calls) - 1]
+
+    voted = classify_votes(
+        "List three colors.",
+        [],
+        dry_run=False,
+        model="dummy-model",
+        max_chars=100,
+        k=3,
+        temperature=0.4,
+        complete=complete,
+    )
+    assert voted.label is Label.DSAT
+    assert voted.decision == "majority"
+    assert voted.votes == (Label.SAT, Label.DSAT, Label.DSAT)
+    assert calls == [0.4, 0.4, 0.4]
+
+    sequence = iter(("SAT", "DSAT", "sem sinal"))
+
+    def tied(prompt: str, *, model: str, timeout: float, temperature: float) -> str:
+        return next(sequence)
+
+    tie = classify_votes(
+        "List three colors.",
+        [],
+        dry_run=False,
+        model="dummy-model",
+        max_chars=None,
+        k=3,
+        temperature=0.7,
+        complete=tied,
+    )
+    assert tie.label is Label.SAT
+    assert tie.decision == "first_inference"
+
+    def boom(*args, **kwargs):
+        raise AssertionError("dry-run chamou o cliente")
+
+    dry = classify_votes(
+        "List three colors.",
+        [],
+        dry_run=True,
+        model=None,
+        max_chars=100,
+        k=3,
+        complete=boom,
+    )
+    assert dry.label is Label.NO_SIGNAL
+    assert dry.votes == (Label.NO_SIGNAL, Label.NO_SIGNAL, Label.NO_SIGNAL)
+    assert dry.decision == "majority"
+
+
+def test_temperature_and_inference_k_land_in_the_run_json(
+    tiny_path: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("dry-run chamou a rede")
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    output = tmp_path / "temp.json"
+    code = main(
+        [
+            "--data",
+            str(tiny_path),
+            "--shot",
+            "zero",
+            "--test-size",
+            "3",
+            "--per-class",
+            "1",
+            "--seed",
+            "0",
+            "--dry-run",
+            "--inferences",
+            "1",
+            "--temperature",
+            "0.3",
+            "--output",
+            str(output),
+        ]
+    )
+    assert code == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["inference_k"] == 1
+    assert payload["temperature"] == 0.3
+    assert payload["tie_break"] == "first_inference"
+    assert all(len(votes) == 1 for votes in payload["inference_votes"])
 
 
 def test_zero_shot_rejects_k(tiny_path: Path):

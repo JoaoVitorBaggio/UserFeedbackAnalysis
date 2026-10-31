@@ -29,7 +29,7 @@ Checkpoints fechados em 31/10/2026. Nenhum id abaixo é resultado, e não há m�
 
 **Transformer.** Encoder: BERT-base multilíngue ou E5-base. Os dois são aceitáveis; o id usado na corrida entra no manifesto. O loop de treino é de Nikolas Chemale, na RTX 4060 8GB. A loss é a cross-entropy categórica de 3 classes.
 
-**LLM (zero-shot e few-shot).** Modelo: Llama 3.1 8B Instruct, via Groq ou OpenRouter. O id da API entra no JSON da corrida. Cada exemplo recebe K=3 inferências; o rótulo entregue ao harness é o voto majoritário (a moda). Um placar 2–1 tem moda. Três rótulos diferentes não têm moda única: o desempate está **a definir**. Temperatura 0 não é exigida. O número de demonstrações do few-shot continua **a definir**. O teste não entra no prompt.
+**LLM (zero-shot e few-shot).** Modelo: Llama 3.1 8B Instruct, via Groq ou OpenRouter. O id da API entra no JSON da corrida. Cada exemplo recebe K=3 inferências; o rótulo entregue ao harness é o voto majoritário (a moda). Um placar 2–1 tem moda. Três rótulos diferentes não têm moda única: o código usa a primeira inferência entre as empatadas e grava `tie_break: first_inference`. A call de 31/10/2026 deixou esse desempate em aberto; esta é a regra implementada. Temperatura 0 não é exigida; o valor usado entra no JSON. Se `--temperature` não vier, o cliente envia 0.7 (padrão local, para as três amostras poderem divergir; não é hiperparâmetro medido). O número de demonstrações do few-shot continua **a definir**. O teste não entra no prompt.
 
 ## Harness
 
@@ -61,7 +61,7 @@ Três sementes, as mesmas nas quatro corridas. Cada semente redesenha a partiç�
 
 A unidade do split (conversa ou turno) está **a definir** na inspeção do arquivo. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Se a unidade for a conversa, não cortar conversa prevalece sobre a fração exata: o tamanho realizado pode passar de 12%. A estratificação continua o alvo.
 
-O splitter deste repositório ainda recebe uma contagem inteira e não estratifica. A fração de 12% estratificada é a regra do protocolo; o código não a implementa neste momento.
+O código implementa essa fração em `--test-fraction` (padrão 0.12 quando `--test-size` não vem). Em `turn`, cada classe contribui o arredondamento half-up de `n_classe × 0.12`. Em `conversation`, a conversa inteira fica de um lado só; a chave é o rótulo majoritário dos turnos elegíveis, e empate de contagem segue SAT, DSAT, sem sinal. O teste não é rebalanceado. `--test-size` inteiro permanece para smoke, sem estratificar. Semente, fração ou contagem, regra e contagens realizadas por classe entram no JSON.
 
 ## Métricas (hold-out)
 

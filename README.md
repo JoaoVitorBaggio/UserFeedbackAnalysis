@@ -71,18 +71,18 @@ Mapa de classe, o da definição:
 
 Os dois verdadeiros saem da partição. Não há regra de precedência.
 
-O card não traz chave de conversa. O loader infere `conversation_id` quando `UtterranceId` volta a 0 ou diminui, na ordem do arquivo. A unidade do split segue em aberto no protocolo. O padrão do código é `conversation`, para não colocar a conversa inferida dos dois lados do hold-out. `--split-unit turn` existe e pode vazar conversa; o manifesto avisa.
+O card não traz chave de conversa. O loader infere `conversation_id` quando `UtterranceId` volta a 0 ou diminui, na ordem do arquivo. A unidade do split segue em aberto no protocolo. O padrão do código é `conversation`, para a conversa inferida ficar inteira de um lado do hold-out. A chave de estratificação, nesse modo, é o rótulo majoritário dos turnos elegíveis; empate de contagem segue SAT, depois DSAT, depois sem sinal. `--split-unit turn` estratifica no turno e pode vazar conversa; o manifesto avisa.
 
 Filtro padrão: `Role == User`. É hipótese de trabalho, porque a pergunta é sobre a mensagem do usuário. O blueprint deixa o filtro em aberto. `--role any` mantém os dois papéis. `--role Agent` fica disponível.
 
 Ordem da partição, a do protocolo:
 
-1. Teste na distribuição dos exemplos elegíveis. O protocolo fecha 12% estratificado pelas três classes, separado antes do treino balanceado. `--test-size` no código continua contagem inteira: o splitter ainda não recebe fração nem estratifica. A contagem que realiza os 12% fica no JSON da corrida.
-2. Validação, se `--val-size` vier. O tamanho continua a definir. Sai do que restou depois do teste, nunca do teste.
+1. Teste na distribuição dos exemplos elegíveis, separado antes do treino balanceado. `--test-fraction 0.12` é o protocolo: estratificado pelas três classes, sem rebalancear o teste. Se `--test-size` e `--test-fraction` faltarem, a fração 0.12 entra sozinha. `--test-size` continua contagem inteira sem estratificar, para smoke e fixtures. Os dois flags são exclusivos. O JSON grava fração ou contagem, semente, `stratified`, a regra e as contagens realizadas por classe (`test_class_counts`, `test_class_targets`).
+2. Validação, se `--val-size` vier. O tamanho continua em aberto. É uma contagem inteira do que restou depois do teste, nunca do teste.
 3. Treino balanceado, `--per-class` (padrão 10000). Sem sinal é amostra aleatória do pool que sobrou, não o pool inteiro.
-4. O protocolo usa três sementes, as mesmas nas quatro corridas. `--seed` continua uma semente por invocação e entra no manifesto.
+4. O protocolo usa três sementes, as mesmas nas quatro corridas. `--seed` é uma semente por invocação e entra no manifesto. Quem chama repete a corrida; este repositório não escolhe os três inteiros.
 
-Em `conversation`, o teste realizado pode passar do `--test-size` para não cortar conversa. `--strict-per-class` falha se alguma classe ficar abaixo do alvo. Sem essa flag, o manifesto registra o déficit.
+Em `turn`, cada classe contribui `round half-up(n_classe × fração)` exemplos. Em `conversation`, a conversa inteira muda de lado: o realizado pode passar de 12%, e o manifesto registra alvo contra realizado. `--strict-per-class` falha se alguma classe ficar abaixo do alvo de treino. Sem essa flag, o manifesto registra o déficit.
 
 `--limit` lê só um prefixo. Prefixo não é a distribuição real e não é o hold-out do experimento.
 
@@ -95,7 +95,7 @@ python -m user_feedback_analysis.data.fetch --output data/sat_dsat_annotation.js
 
 O card lista 1.062.105 linhas na config (consulta em out/2026). Isso é número do card, não contagem deste repositório. O pico de RAM da carga inteira não foi medido aqui.
 
-O mesmo `SplitConfig` (semente, tamanho de teste, `per_class`, unidade, papel) é o que alinha as quatro corridas. Trocar um desses parâmetros troca o hold-out.
+O mesmo `SplitConfig` (semente, fração ou contagem de teste, `per_class`, unidade, papel) é o que alinha as quatro corridas. Trocar um desses parâmetros troca o hold-out.
 
 ## Baseline
 
@@ -109,7 +109,7 @@ Checkpoint principal: `cardiffnlp/twitter-roberta-base-sentiment-latest` (RoBERT
 
 Checkpoint sem neutro não roda. O mapa ficaria a definir, e o código não colapsa para duas classes. O modelo antigo `cardiffnlp/twitter-roberta-base-sentiment` (`LABEL_0/1/2`) tem exceção explícita no mesmo mapa.
 
-O pré-processamento do card (`@menção` → `@user`, URL → `http`) vale para esses dois ids. A sequência é truncada em 512, o limite do modelo.
+O pré-processamento do card (`@menção` → `@user`, URL → `http`) vale para os ids `cardiffnlp/twitter-roberta-base-sentiment*`. O checkpoint da Hartmann não usa esse pré-processamento. A sequência é truncada em 512, o limite do modelo. `--checkpoint` (alias `--model-id`) troca o id; o padrão é o Cardiff.
 
 Smoke, sem download e sem GPU:
 
@@ -127,13 +127,13 @@ Corrida com o checkpoint, CPU:
 ```bash
 python -m user_feedback_analysis.baseline.run \
   --hf \
-  --test-size TAMANHO --per-class 10000 --seed SEMENTE \
+  --test-fraction 0.12 --per-class 10000 --seed SEMENTE \
   --strict-per-class \
   --device cpu --batch-size 8 \
   --output runs/baseline.json
 ```
 
-`TAMANHO` é a contagem inteira que realiza os 12% do protocolo; `SEMENTE` é uma das três sementes. As duas entram no JSON. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`.
+`SEMENTE` é uma das três sementes do protocolo. O inteiro entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Repita a corrida para cada semente; os três inteiros não estão escolhidos neste repositório. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
 
 GTX 1060 6GB: a inferência deste RoBERTa-base em fp32 costuma caber com `--device cuda --batch-size 8`. O pico de VRAM não foi medido aqui. Se a placa recusar, use CPU ou baixe o batch.
 
@@ -159,7 +159,11 @@ Chamada real:
 | `LLM_MODEL` | obrigatória. O protocolo fecha Llama 3.1 8B Instruct, via Groq ou OpenRouter; o id da API vai nesta variável |
 | `OPENAI_BASE_URL` | opcional; padrão `https://api.openai.com/v1` |
 
-Sem `OPENAI_API_KEY`, a corrida cai em dry-run e não chama a rede. Chave presente sem `LLM_MODEL` é erro, para não gravar mock no lugar de uma chamada que parecia real. `--live` exige as duas. `--dry-run` não chama a rede mesmo com chave. O protocolo da chamada real é K=3 inferências por exemplo, agregadas por voto majoritário; temperatura 0 não é exigida. O módulo `llm/` ainda envia uma chamada com temperatura 0.
+Sem `OPENAI_API_KEY`, a corrida cai em dry-run e não chama a rede. Chave presente sem `LLM_MODEL` é erro, para não gravar mock no lugar de uma chamada que parecia real. `--live` exige as duas. `--dry-run` não chama a rede mesmo com chave.
+
+Cada exemplo do teste recebe `--inferences` chamadas (padrão K=3). O rótulo entregue ao harness é a moda. Sem moda única, o desempate é a primeira inferência entre as empatadas (`tie_break: first_inference` no JSON). Para K=3, isso é o caso 1–1–1; um placar 2–1 fica na moda. `--temperature` é livre. O padrão do cliente é 0.7, para as K amostras poderem divergir num endpoint determinístico; não é hiperparâmetro medido e o protocolo não exige 0. K, a regra do voto, a temperatura e os votos entram no JSON. `--k` do few-shot continua sendo o número de demonstrações, ainda em aberto, e não é este K.
+
+Rota documentada, sem chave no código: `OPENAI_BASE_URL=https://openrouter.ai/api/v1` e `LLM_MODEL=meta-llama/llama-3.1-8b-instruct`. Na Groq, a base compatível é `https://api.groq.com/openai/v1`. A página de depreciação da Groq (consulta em 31/10/2026) lista o id `llama-3.1-8b-instant` como desligado em 16/08/2026 fora de contrato enterprise; o id que o provedor servir para Llama 3.1 8B Instruct vai em `LLM_MODEL`. Esta nota não é uma chamada de API.
 
 Cada texto no prompt é cortado em `--max-chars` (padrão 4000; `0` desliga). O corte fica no JSON (`n_test_truncated`, `n_demo_truncated`). Não é decisão do protocolo. Turnos do corpus podem ser longos; o card chega a centenas de milhares de caracteres.
 

@@ -2,12 +2,25 @@
 
 Variáveis de ambiente:
 
-- ``OPENAI_API_KEY``: obrigatória na chamada real.
-- ``LLM_MODEL``: obrigatória na chamada real. O protocolo deixa o modelo a definir.
+- ``OPENAI_API_KEY``: obrigatória na chamada real. Não fica no código.
+- ``LLM_MODEL``: obrigatória na chamada real. O protocolo fecha Llama 3.1 8B
+  Instruct. O id da API vai nesta variável.
 - ``OPENAI_BASE_URL``: opcional. Padrão ``https://api.openai.com/v1``.
-  Serve endpoint local (por exemplo um servidor compatível).
+  Serve Groq, OpenRouter ou um endpoint local compatível.
 
-Sem chave, a corrida cai no dry-run e não chama a rede.
+Rotas documentadas para o modelo do protocolo (consulta em 31/10/2026):
+
+- OpenRouter: ``OPENAI_BASE_URL=https://openrouter.ai/api/v1`` e
+  ``LLM_MODEL=meta-llama/llama-3.1-8b-instruct``.
+- Groq: ``OPENAI_BASE_URL=https://api.groq.com/openai/v1``. O id histórico
+  ``llama-3.1-8b-instant`` consta como desligado em 16/08/2026 na página de
+  depreciação da Groq, fora de contrato enterprise. O id que o provedor
+  servir para Llama 3.1 8B Instruct entra em ``LLM_MODEL``.
+
+Sem chave, a corrida cai no dry-run e não chama a rede. Cada exemplo pede
+K inferências (padrão 3) e devolve a moda. A temperatura padrão do cliente
+é 0.7, para as amostras poderem divergir; 0 continua aceito e não é
+exigência do protocolo. O valor vai no corpo da chamada e no JSON.
 """
 
 from __future__ import annotations
@@ -16,13 +29,33 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from user_feedback_analysis.labels import Label
 from user_feedback_analysis.llm.mock import mock_label
 from user_feedback_analysis.llm.parse import parse_label
+from user_feedback_analysis.llm.vote import majority_vote
 from user_feedback_analysis.records import Example
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DOCUMENTED_LLM_NAME = "Llama 3.1 8B Instruct"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_LLAMA_31_8B = "meta-llama/llama-3.1-8b-instruct"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+DEFAULT_INFERENCE_K = 3
+# Padrão do cliente, não hiperparâmetro medido e não número do protocolo.
+# Com temperatura 0 um endpoint determinístico devolve três rótulos iguais
+# e o voto majoritário não separa nada. 0.7 deixa as K amostras poderem divergir.
+DEFAULT_TEMPERATURE = 0.7
+
+_MISSING_MODEL = (
+    "LLM_MODEL ausente. O protocolo usa Llama 3.1 8B Instruct. "
+    f"OpenRouter: LLM_MODEL={OPENROUTER_LLAMA_31_8B} e "
+    f"OPENAI_BASE_URL={OPENROUTER_BASE_URL}. "
+    f"Groq: OPENAI_BASE_URL={GROQ_BASE_URL} e o id que o provedor servir "
+    "para esse modelo. Passe o id pela variável LLM_MODEL. Não há chave no código."
+)
 
 
 def resolve_dry_run(requested: bool | None) -> bool:
@@ -42,22 +75,25 @@ def resolve_dry_run(requested: bool | None) -> bool:
                 "ou rode com --dry-run."
             )
         if not has_model:
-            raise RuntimeError(
-                "LLM_MODEL ausente. O protocolo deixa o modelo a definir; "
-                "passe o id pela variável LLM_MODEL."
-            )
+            raise RuntimeError(_MISSING_MODEL)
         return False
     return True
 
 
-def chat_complete(prompt: str, *, model: str, timeout: float = 60.0) -> str:
+def chat_complete(
+    prompt: str,
+    *,
+    model: str,
+    timeout: float = 60.0,
+    temperature: float = DEFAULT_TEMPERATURE,
+) -> str:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY ausente.")
     base = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     body = {
         "model": model,
-        "temperature": 0,
+        "temperature": temperature,
         "messages": [
             {
                 "role": "system",
@@ -93,6 +129,60 @@ def chat_complete(prompt: str, *, model: str, timeout: float = 60.0) -> str:
     return content
 
 
+@dataclass(frozen=True)
+class VoteResult:
+    label: Label
+    votes: tuple[Label, ...]
+    decision: str
+
+
+def classify_votes(
+    text: str,
+    demonstrations: list[Example],
+    *,
+    dry_run: bool,
+    model: str | None,
+    max_chars: int | None,
+    timeout: float = 60.0,
+    k: int = DEFAULT_INFERENCE_K,
+    temperature: float = DEFAULT_TEMPERATURE,
+    complete: Callable[..., str] | None = None,
+) -> VoteResult:
+    """K inferências do mesmo prompt. A resposta é a moda dos rótulos parseados.
+
+    Dry-run repete o mock local K vezes e não chama ``complete`` nem a rede.
+    """
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("K é um inteiro >= 1. O protocolo usa K=3.")
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or float(temperature) < 0
+    ):
+        raise ValueError("temperature é um número >= 0. O protocolo não exige 0.")
+    from user_feedback_analysis.llm.prompts import build_prompt, clip_text
+
+    prompt, _ = build_prompt(text, demonstrations, max_chars=max_chars)
+    if dry_run:
+        shown, _ = clip_text(text, max_chars)
+        votes = [mock_label(shown) for _ in range(k)]
+    else:
+        if not model:
+            raise RuntimeError(_MISSING_MODEL)
+        sender = complete if complete is not None else chat_complete
+        votes = []
+        for _ in range(k):
+            raw = sender(
+                prompt,
+                model=model,
+                timeout=timeout,
+                temperature=float(temperature),
+            )
+            votes.append(parse_label(raw))
+    label, decision = majority_vote(votes)
+    return VoteResult(label=label, votes=tuple(votes), decision=decision)
+
+
 def classify_text(
     text: str,
     demonstrations: list[Example],
@@ -101,14 +191,18 @@ def classify_text(
     model: str | None,
     max_chars: int | None,
     timeout: float = 60.0,
+    k: int = DEFAULT_INFERENCE_K,
+    temperature: float = DEFAULT_TEMPERATURE,
+    complete: Callable[..., str] | None = None,
 ) -> Label:
-    from user_feedback_analysis.llm.prompts import build_prompt, clip_text
-
-    prompt, _ = build_prompt(text, demonstrations, max_chars=max_chars)
-    if dry_run:
-        shown, _ = clip_text(text, max_chars)
-        return mock_label(shown)
-    if not model:
-        raise RuntimeError("LLM_MODEL ausente.")
-    raw = chat_complete(prompt, model=model, timeout=timeout)
-    return parse_label(raw)
+    return classify_votes(
+        text,
+        demonstrations,
+        dry_run=dry_run,
+        model=model,
+        max_chars=max_chars,
+        timeout=timeout,
+        k=k,
+        temperature=temperature,
+        complete=complete,
+    ).label

@@ -1,7 +1,11 @@
 import pytest
 
-from user_feedback_analysis.baseline.classifier import preprocess_cardiff_twitter
+from user_feedback_analysis.baseline.classifier import (
+    preprocess_cardiff_twitter,
+    uses_tweet_preprocess,
+)
 from user_feedback_analysis.baseline.mapping import (
+    ALTERNATIVE_MODEL_ID,
     DEFAULT_MODEL_ID,
     pipeline_label_to_sentiment,
     sentiment_to_label,
@@ -79,6 +83,16 @@ def test_checkpoint_must_expose_neutral():
     assert mapping == {0: "negative", 1: "neutral", 2: "positive"}
     with pytest.raises(ValueError, match="duas classes"):
         validate_id2label({0: "negative", 1: "positive"}, "example/two-way")
+
+
+def test_alternative_checkpoint_exposes_three_classes_without_tweet_preprocess():
+    assert uses_tweet_preprocess(DEFAULT_MODEL_ID)
+    assert not uses_tweet_preprocess(ALTERNATIVE_MODEL_ID)
+    mapping = validate_id2label(
+        {0: "negative", 1: "neutral", 2: "positive"},
+        ALTERNATIVE_MODEL_ID,
+    )
+    assert set(mapping.values()) == {"negative", "neutral", "positive"}
 
 
 def test_legacy_cardiff_label_ids_are_explicit():

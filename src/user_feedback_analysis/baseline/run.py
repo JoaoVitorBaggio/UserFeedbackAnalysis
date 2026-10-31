@@ -11,7 +11,11 @@ import argparse
 import sys
 from typing import Sequence
 
-from user_feedback_analysis.baseline.mapping import DEFAULT_MODEL_ID, mapping_dict
+from user_feedback_analysis.baseline.mapping import (
+    ALTERNATIVE_MODEL_ID,
+    DEFAULT_MODEL_ID,
+    mapping_dict,
+)
 from user_feedback_analysis.baseline.mock import LexiconMockClassifier
 from user_feedback_analysis.cli_args import (
     add_corpus_args,
@@ -42,7 +46,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Léxico local, sem baixar o checkpoint. Não é resultado experimental.",
     )
-    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
+    parser.add_argument(
+        "--checkpoint",
+        "--model-id",
+        dest="checkpoint",
+        default=DEFAULT_MODEL_ID,
+        help=(
+            "Checkpoint de sentimento com positivo, negativo e neutro. "
+            f"Padrão: {DEFAULT_MODEL_ID}. "
+            f"Alternativa, não é a corrida principal: {ALTERNATIVE_MODEL_ID}."
+        ),
+    )
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=512)
@@ -64,6 +78,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def run_baseline(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
+    checkpoint = str(args.checkpoint).strip()
+    if not checkpoint:
+        raise ValueError("checkpoint vazio.")
     corpus = load_corpus(args)
     config = config_from_args(args)
     split = make_splits(corpus, config)
@@ -82,7 +99,7 @@ def run_baseline(args: argparse.Namespace) -> tuple[dict[str, object], str, str]
         )
 
         classifier = HuggingFaceSentimentClassifier(
-            args.model_id,
+            checkpoint,
             device=args.device,
             batch_size=args.batch_size,
             max_length=args.max_length,
