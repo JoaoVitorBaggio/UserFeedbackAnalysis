@@ -1,0 +1,161 @@
+"""Corridas de LLM zero-shot e few-shot. A métrica sai do harness compartilhado.
+
+Sem ``OPENAI_API_KEY`` a corrida entra em dry-run e não chama a rede.
+``LLM_MODEL`` fica a definir no protocolo; a chamada real exige a variável.
+
+    python -m user_feedback_analysis.llm.run \\
+        --data tests/fixtures/tiny_sat_dsat.jsonl \\
+        --shot zero --test-size 3 --per-class 1 --seed 0 --dry-run
+
+    python -m user_feedback_analysis.llm.run \\
+        --data tests/fixtures/tiny_sat_dsat.jsonl \\
+        --shot few --k 3 --test-size 3 --per-class 1 --seed 0 --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from typing import Sequence
+
+from user_feedback_analysis.cli_args import (
+    add_corpus_args,
+    add_split_args,
+    config_from_args,
+    load_corpus,
+)
+from user_feedback_analysis.data.split import format_split, make_splits
+from user_feedback_analysis.harness import (
+    build_run_record,
+    evaluate,
+    format_report,
+    prediction_rows,
+    write_json,
+)
+from user_feedback_analysis.llm.client import classify_text, resolve_dry_run
+from user_feedback_analysis.llm.prompts import clip_text
+from user_feedback_analysis.llm.sample import sample_demonstrations
+from user_feedback_analysis.records import Example
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="LLM zero-shot ou few-shot no espaço SAT, DSAT e sem sinal."
+    )
+    add_corpus_args(parser)
+    add_split_args(parser)
+    parser.add_argument("--shot", choices=("zero", "few"), required=True)
+    parser.add_argument("--k", type=int, default=None, help="Exemplos de few-shot, só do treino. k está a definir.")
+    parser.add_argument(
+        "--few-shot-seed",
+        type=int,
+        default=None,
+        help="Semente da amostra de exemplos. Padrão: a mesma --seed do split.",
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Não chama a rede.")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Exige OPENAI_API_KEY e LLM_MODEL.",
+    )
+    parser.add_argument(
+        "--max-chars",
+        type=int,
+        default=4000,
+        help="Corte de cada texto no prompt. 0 desliga. Não é decisão do protocolo.",
+    )
+    parser.add_argument("--timeout", type=float, default=60.0)
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        payload, report_text, split_text = run_llm(args)
+    except (OSError, ValueError, ImportError, RuntimeError) as exc:
+        print(f"erro: {exc}", file=sys.stderr)
+        return 1
+    print(split_text)
+    print(report_text)
+    if payload["dry_run"]:
+        print("aviso: dry-run. As predições são mock e não são resultado experimental.")
+    if args.output is not None:
+        write_json(payload, args.output)
+        print(f"relatório: {args.output}")
+    return 0
+
+
+def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
+    if args.dry_run and args.live:
+        raise ValueError("Use só um entre --dry-run e --live.")
+    if args.shot == "zero" and args.k is not None:
+        raise ValueError("Zero-shot não usa --k.")
+    if args.shot == "few" and args.k is None:
+        raise ValueError("Few-shot precisa de --k (o valor está a definir no protocolo).")
+    if args.max_chars < 0:
+        raise ValueError("max_chars é >= 0. Zero desliga o corte.")
+    max_chars = None if args.max_chars == 0 else args.max_chars
+    requested = True if args.dry_run else False if args.live else None
+    dry_run = resolve_dry_run(requested)
+
+    corpus = load_corpus(args)
+    config = config_from_args(args)
+    split = make_splits(corpus, config)
+    few_seed = args.seed if args.few_shot_seed is None else args.few_shot_seed
+    demonstrations: list[Example] = []
+    if args.shot == "few":
+        demonstrations = sample_demonstrations(split.train, args.k, few_seed)
+        test_ids = {example.example_id for example in split.test}
+        leaked = [example.example_id for example in demonstrations if example.example_id in test_ids]
+        if leaked:
+            raise RuntimeError(f"Few-shot viu o teste: {leaked}.")
+
+    predictions = [
+        classify_text(
+            example.text,
+            demonstrations,
+            dry_run=dry_run,
+            model=os.environ.get("LLM_MODEL"),
+            max_chars=max_chars,
+            timeout=args.timeout,
+        )
+        for example in split.test
+    ]
+    gold = [example.label for example in split.test]
+    report = evaluate(gold, predictions)
+    n_test_truncated = _n_truncated([example.text for example in split.test], max_chars)
+    n_demo_truncated = _n_truncated([example.text for example in demonstrations], max_chars)
+    note = (
+        "Dry-run: predições mock, sem chamada de rede. Não é resultado experimental."
+        if dry_run
+        else "Chamada real. official_result continua falso; os docs do repositório não guardam esta métrica."
+    )
+    payload = build_run_record(
+        arm="llm_zero_shot" if args.shot == "zero" else "llm_few_shot",
+        report=report,
+        split=split.manifest.to_dict(),
+        predictions=prediction_rows(
+            [example.example_id for example in split.test],
+            gold,
+            predictions,
+        ),
+        extra={
+            "dry_run": dry_run,
+            "model": "mock" if dry_run else os.environ.get("LLM_MODEL"),
+            "shot": args.shot,
+            "k": 0 if args.shot == "zero" else args.k,
+            "few_shot_seed": few_seed if args.shot == "few" else None,
+            "demonstration_ids": [example.example_id for example in demonstrations],
+            "max_chars": max_chars,
+            "n_test_truncated": n_test_truncated,
+            "n_demo_truncated": n_demo_truncated,
+            "temperature": None if dry_run else 0,
+            "note": note,
+        },
+    )
+    return payload, format_report(report), format_split(split.manifest)
+
+
+def _n_truncated(texts: list[str], max_chars: int | None) -> int:
+    return sum(1 for text in texts if clip_text(text, max_chars)[1])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

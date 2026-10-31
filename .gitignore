@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Corpus e corridas ficam fora do git.
+# Âncora na raiz: `data/` sem barra também ignora o pacote
+# src/user_feedback_analysis/data/.
+/data/
+/runs/

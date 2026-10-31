@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "user-feedback-analysis"
+version = "0.1.0"
+description = "Harness, baseline de sentimento e braços de LLM do trabalho de PLN (INF01100, Grupo 16)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "datasets>=2.19",
+  "torch>=2.2",
+  "transformers>=4.44",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ufa-baseline = "user_feedback_analysis.baseline.run:main"
+ufa-llm = "user_feedback_analysis.llm.run:main"
+ufa-harness = "user_feedback_analysis.harness:main"
+ufa-fetch = "user_feedback_analysis.data.fetch:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
