@@ -10,6 +10,8 @@ Nada disto foi executado. Onde faltar número, o texto diz **a definir**. Estima
 4. Teste na distribuição real.
 5. Loss do braço núcleo: cross-entropy categórica de 3 classes. Ver [funcao-de-loss.md](funcao-de-loss.md).
 
+O primeiro experimento a rodar é o classificador de sentimento genérico pré-treinado (baseline): é o braço mais barato e a referência para os outros dois (Transformer fine-tunado e LLM zero/few-shot).
+
 ## Os três braços
 
 | # | Nome | O que é | Dono |
@@ -56,7 +58,7 @@ A semente da amostra aleatória fica registrada. O valor está **a definir**. A 
 | Precisão | No agregado do harness; por classe se útil |
 | Recall | No agregado do harness; por classe se útil |
 
-Acurácia não decide a comparação: o teste é desbalanceado. Sementes de treino: **a definir**. O marco de 4/11/2026 aceita uma corrida de um braço.
+Acurácia não decide a comparação: o teste é desbalanceado. Sementes de treino: **a definir**. O marco de 4/11/2026 é a corrida do baseline.
 
 ## Divisão de tarefas
 
@@ -73,8 +75,8 @@ Acurácia não decide a comparação: o teste é desbalanceado. Sementes de trei
 
 | Data | O que trava |
 | --- | --- |
-| 4/11/2026 (quarta-feira) | Meta interna de trabalho do grupo: primeiro resultado de F1 de qualquer braço (macro F1 no harness compartilhado). |
+| 4/11/2026 (quarta-feira) | Meta interna de trabalho do grupo: primeiro resultado de F1, o do baseline (macro F1 no harness compartilhado). |
 | 24/11/2026 | Slides da disciplina. |
 | Depois dos slides | Artigo SBC, 8+ páginas. Entrega posterior. Não bloqueia o blueprint nem os slides. |
 
-4/11/2026 é alvo de trabalho do grupo, não número medido e não prazo lido de um edital neste arquivo. Qualquer braço que já tenha backend no harness pode fornecer esse primeiro F1.
+4/11/2026 é alvo de trabalho do grupo, não número medido e não prazo lido de um edital neste arquivo. Esse primeiro F1 é o do baseline no harness compartilhado.
