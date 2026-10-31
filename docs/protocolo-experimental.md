@@ -12,14 +12,14 @@ Nada disto foi executado. Onde faltar número, o texto diz **a definir**. Estima
 
 O primeiro experimento a rodar é o classificador de sentimento genérico pré-treinado (baseline): é o braço mais barato e a referência para os outros (Transformer fine-tunado, LLM zero-shot e LLM few-shot).
 
-## Experimentos
+## Os quatro experimentos
 
-Quatro corridas, nesta ordem. O enquadramento de três braços (baseline, Transformer, LLM) continua no restante do protocolo; zero-shot e few-shot são experimentos separados.
+Quatro corridas, nesta ordem. O enquadramento de três braços (baseline, Transformer, LLM) continua no restante do protocolo; zero-shot e few-shot não se fundem numa linha só.
 
-1. Classificador de sentimento genérico pré-treinado (baseline). Roda primeiro. Dono: João Vítor Baggio.
+1. Baseline de sentimento genérico. Roda primeiro. Dono: João Vítor Baggio.
 2. Transformer fine-tunado (família BERT/RoBERTa). Dono: Nikolas Chemale.
-3. LLM zero-shot. Dono: João Vítor Baggio.
-4. LLM few-shot. Dono: João Vítor Baggio.
+3. LLM zero-shot (corrida separada). Dono: João Vítor Baggio.
+4. LLM few-shot (corrida separada). Dono: João Vítor Baggio.
 
 João Vítor Baggio também é dono do harness inicial, que avalia as quatro corridas.
 
@@ -68,7 +68,8 @@ Acurácia não decide a comparação: o teste é desbalanceado. Sementes de trei
 | Frente | Dono |
 | --- | --- |
 | Baseline de sentimento genérico | João Vítor Baggio |
-| LLM zero-shot / few-shot | João Vítor Baggio |
+| LLM zero-shot (corrida separada) | João Vítor Baggio |
+| LLM few-shot (corrida separada) | João Vítor Baggio |
 | Harness inicial compartilhado (precisão, recall, macro F1) | João Vítor Baggio |
 | Fine-tuning / treino do Transformer (braço núcleo, só isso) | Nikolas Chemale |
 | Slides | Grupo 16 |
