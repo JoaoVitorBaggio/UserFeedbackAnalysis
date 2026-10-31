@@ -1,7 +1,10 @@
 """Corridas de LLM zero-shot e few-shot. A métrica sai do harness compartilhado.
 
 Sem ``OPENAI_API_KEY`` a corrida entra em dry-run e não chama a rede.
-``LLM_MODEL`` fica a definir no protocolo; a chamada real exige a variável.
+A chamada real exige ``LLM_MODEL`` (Llama 3.1 8B Instruct, via Groq ou
+OpenRouter). Cada exemplo do teste recebe K inferências (padrão 3); o
+rótulo é a moda. ``--k`` do few-shot é outra coisa: quantas demonstrações
+entram no prompt, e continua em aberto.
 
     python -m user_feedback_analysis.llm.run \\
         --data tests/fixtures/tiny_sat_dsat.jsonl \\
@@ -33,7 +36,13 @@ from user_feedback_analysis.harness import (
     prediction_rows,
     write_json,
 )
-from user_feedback_analysis.llm.client import classify_text, resolve_dry_run
+from user_feedback_analysis.llm.client import (
+    DEFAULT_INFERENCE_K,
+    DEFAULT_TEMPERATURE,
+    classify_votes,
+    resolve_dry_run,
+)
+from user_feedback_analysis.llm.vote import TIE_BREAK, VOTE
 from user_feedback_analysis.llm.prompts import clip_text
 from user_feedback_analysis.llm.sample import sample_demonstrations
 from user_feedback_analysis.records import Example
@@ -46,7 +55,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     add_corpus_args(parser)
     add_split_args(parser)
     parser.add_argument("--shot", choices=("zero", "few"), required=True)
-    parser.add_argument("--k", type=int, default=None, help="Exemplos de few-shot, só do treino. k está a definir.")
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=None,
+        help=(
+            "Demonstrações do few-shot, só do treino. Continua em aberto no protocolo. "
+            "Não é o K=3 das inferências."
+        ),
+    )
+    parser.add_argument(
+        "--inferences",
+        type=int,
+        default=DEFAULT_INFERENCE_K,
+        help=(
+            "Inferências por exemplo do teste. O protocolo usa K=3, agregadas "
+            "por voto majoritário. Não é o --k do few-shot."
+        ),
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=DEFAULT_TEMPERATURE,
+        help=(
+            "Temperatura de cada inferência. O padrão do cliente é 0.7, "
+            "para as K amostras poderem divergir; não é número do protocolo. "
+            "0 continua aceito. O valor entra no JSON."
+        ),
+    )
     parser.add_argument(
         "--few-shot-seed",
         type=int,
@@ -88,7 +124,17 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
     if args.shot == "zero" and args.k is not None:
         raise ValueError("Zero-shot não usa --k.")
     if args.shot == "few" and args.k is None:
-        raise ValueError("Few-shot precisa de --k (o valor está a definir no protocolo).")
+        raise ValueError(
+            "Few-shot precisa de --k. O número de demonstrações continua em aberto no protocolo."
+        )
+    if isinstance(args.inferences, bool) or not isinstance(args.inferences, int) or args.inferences < 1:
+        raise ValueError("inferences é um inteiro >= 1. O protocolo usa K=3.")
+    if (
+        isinstance(args.temperature, bool)
+        or not isinstance(args.temperature, (int, float))
+        or float(args.temperature) < 0
+    ):
+        raise ValueError("temperature é um número >= 0. O protocolo não exige 0.")
     if args.max_chars < 0:
         raise ValueError("max_chars é >= 0. Zero desliga o corte.")
     max_chars = None if args.max_chars == 0 else args.max_chars
@@ -107,17 +153,20 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
         if leaked:
             raise RuntimeError(f"Few-shot viu o teste: {leaked}.")
 
-    predictions = [
-        classify_text(
+    voted = [
+        classify_votes(
             example.text,
             demonstrations,
             dry_run=dry_run,
             model=os.environ.get("LLM_MODEL"),
             max_chars=max_chars,
             timeout=args.timeout,
+            k=args.inferences,
+            temperature=float(args.temperature),
         )
         for example in split.test
     ]
+    predictions = [result.label for result in voted]
     gold = [example.label for example in split.test]
     report = evaluate(gold, predictions)
     n_test_truncated = _n_truncated([example.text for example in split.test], max_chars)
@@ -146,7 +195,14 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
             "max_chars": max_chars,
             "n_test_truncated": n_test_truncated,
             "n_demo_truncated": n_demo_truncated,
-            "temperature": None if dry_run else 0,
+            "inference_k": args.inferences,
+            "vote": VOTE,
+            "tie_break": TIE_BREAK,
+            "temperature": float(args.temperature),
+            "n_tie_breaks": sum(1 for result in voted if result.decision == TIE_BREAK),
+            "inference_votes": [
+                [label.value for label in result.votes] for result in voted
+            ],
             "note": note,
         },
     )

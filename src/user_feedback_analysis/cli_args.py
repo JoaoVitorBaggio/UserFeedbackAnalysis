@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from user_feedback_analysis.data.load import load_jsonl, load_wildfeedback
-from user_feedback_analysis.data.split import SplitConfig
+from user_feedback_analysis.data.split import PROTOCOL_TEST_FRACTION, SplitConfig
 from user_feedback_analysis.records import LoadedCorpus
 
 
@@ -30,17 +30,32 @@ def add_corpus_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--revision",
         default=None,
-        help="Revisão do dataset no Hub. O protocolo deixa a definir.",
+        help="Revisão do dataset no Hub. Continua em aberto no protocolo.",
     )
     parser.add_argument("--cache-dir", default=None)
 
 
 def add_split_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
+    holdout = parser.add_mutually_exclusive_group()
+    holdout.add_argument(
         "--test-size",
         type=int,
-        required=True,
-        help="Exemplos no teste. O protocolo deixa o tamanho a definir.",
+        default=None,
+        help=(
+            "Contagem inteira de exemplos no teste, sem estratificar. "
+            "Serve para smoke e fixtures. Exclusivo com --test-fraction."
+        ),
+    )
+    holdout.add_argument(
+        "--test-fraction",
+        type=float,
+        default=None,
+        help=(
+            "Fração do teste em (0, 1), estratificada pelas três classes. "
+            f"O protocolo usa {PROTOCOL_TEST_FRACTION}. O teste não é rebalanceado. "
+            "Exclusivo com --test-size. Se nenhum dos dois vier, vale "
+            f"{PROTOCOL_TEST_FRACTION}."
+        ),
     )
     parser.add_argument(
         "--per-class",
@@ -52,13 +67,20 @@ def add_split_args(parser: argparse.ArgumentParser) -> None:
         "--seed",
         type=int,
         required=True,
-        help="Semente da amostra. O protocolo deixa o valor a definir.",
+        help=(
+            "Semente desta invocação. O protocolo usa três sementes, as mesmas "
+            "nas quatro corridas; cada corrida recebe uma. O inteiro entra no manifesto. "
+            "Este CLI não escolhe os três inteiros."
+        ),
     )
     parser.add_argument(
         "--val-size",
         type=int,
         default=None,
-        help="Validação tirada do lado de treino, depois do teste. Tamanho a definir.",
+        help=(
+            "Validação tirada do lado de treino, depois do teste, em contagem inteira. "
+            "O tamanho continua em aberto no protocolo."
+        ),
     )
     parser.add_argument(
         "--split-unit",
@@ -95,9 +117,14 @@ def load_corpus(args: argparse.Namespace) -> LoadedCorpus:
 
 def config_from_args(args: argparse.Namespace) -> SplitConfig:
     role = None if str(args.role).casefold() == "any" else str(args.role)
+    test_size = getattr(args, "test_size", None)
+    test_fraction = getattr(args, "test_fraction", None)
+    if test_size is None and test_fraction is None:
+        test_fraction = PROTOCOL_TEST_FRACTION
     return SplitConfig(
         seed=args.seed,
-        test_size=args.test_size,
+        test_size=test_size,
+        test_fraction=test_fraction,
         per_class=args.per_class,
         val_size=args.val_size,
         split_unit=args.split_unit,

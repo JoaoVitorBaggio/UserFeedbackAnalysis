@@ -24,7 +24,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Prefixo de linhas, só para smoke. Omitir materializa o split inteiro.",
     )
-    parser.add_argument("--revision", default=None, help="Revisão no Hub. O protocolo deixa a definir.")
+    parser.add_argument(
+        "--revision",
+        default=None,
+        help="Revisão no Hub. Continua em aberto no protocolo.",
+    )
     parser.add_argument("--cache-dir", default=None)
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:

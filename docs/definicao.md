@@ -45,7 +45,7 @@ Mistura de classes — **estimativa combinada do grupo, não contagem deste repo
 
 **Treino balanceado.** O treino balanceado mira cerca de 10 mil exemplos por classe (SAT, DSAT e sem sinal). Os cerca de 10 mil exemplos de **sem sinal** são uma amostra aleatória do pool grande sem sinal (~87% dos dados), não o pool inteiro e não um subconjunto curado ou escolhido à mão, salvo especificação posterior.
 
-**Teste.** 12% dos exemplos elegíveis, estratificado pelas três classes, disjunto do treino. A separação do teste vem antes da amostra de treino balanceado, para essa amostra não entrar no hold-out. Depois da estratificação o teste permanece na distribuição real (desbalanceada): não é rebalanceado. A unidade do split (conversa ou turno) continua em aberto.
+**Teste.** 12% dos exemplos elegíveis, estratificado pelas três classes, disjunto do treino. A separação do teste vem antes da amostra de treino balanceado, para essa amostra não entrar no hold-out. Depois da estratificação o teste permanece na distribuição real (desbalanceada): não é rebalanceado. A unidade do split (conversa ou turno) continua em aberto. O código cobre as duas: `--test-fraction 0.12` estratifica; em conversa, a chave é a maioria dos turnos elegíveis e a conversa não é cortada.
 
 O card declara o corpus em inglês. O caminho mínimo não traduz.
 
@@ -67,7 +67,7 @@ O card declara o corpus em inglês. O caminho mínimo não traduz.
 | Baseline principal | `cardiffnlp/twitter-roberta-base-sentiment-latest`. Mapa: positive → SAT, negative → DSAT, neutral → sem sinal. O descompasso Twitter versus feedback de assistente é intencional e faz parte da pergunta |
 | Baseline alternativo | `j-hartmann/sentiment-roberta-large-english-3-classes` (três classes no card: negative, neutral, positive). Mesmo mapa. Não é a corrida principal |
 | LLM | Llama 3.1 8B Instruct, via Groq ou OpenRouter |
-| Agregação do LLM | K=3 inferências por exemplo; voto majoritário (moda). Temperatura 0 não é exigida |
+| Agregação do LLM | K=3 inferências por exemplo; voto majoritário (moda). Temperatura 0 não é exigida. Sem moda única, o código usa a primeira inferência empatada (`first_inference`) |
 | Encoder do Transformer | BERT-base multilíngue ou E5-base. Os dois são aceitáveis |
 | GPU do Transformer | RTX 4060 8GB. O loop de treino continua com Nikolas Chemale |
 | Harness inicial | João Vítor Baggio |
@@ -86,10 +86,9 @@ Chatbot de produção. Alinhar um modelo com pares de preferência — o artigo 
 1. Só mensagens com `Role == "User"` carregam rótulo? O card mostra `Role` nos dois papéis. O filtro fica aberto até a inspeção do arquivo.
 2. O artigo descreve a classificação SAT/DSAT feita por GPT-4. Se for o que está neste arquivo, rotular à mão cerca de 200 exemplos e medir a concordância com o rótulo automático. Essa checagem não foi feita.
 3. Os dois booleanos verdadeiros no mesmo turno (precedência ou descarte). Não há regra fechada.
-4. Unidade do split: conversa ou turno. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Não foi decidido.
+4. Unidade do split: conversa ou turno. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Não foi decidido. O código já cobre as duas unidades; em conversa, estratifica pela maioria e não corta o grupo.
 5. Tamanho da validação, tirada do lado de treino, depois do teste. O teste oficial não entra em early stopping.
 6. Número de demonstrações do few-shot (quantos exemplos entram no prompt). Isso não é o K=3 já fechado: K=3 é o número de inferências por exemplo, agregadas por voto majoritário.
 7. Como resumir os três macro F1, um por semente. Cada semente entra no registro. Média ou outro agregado não foi fechado.
-8. Desempate do LLM quando as três inferências trazem três rótulos diferentes e não há moda única.
 
 Os três inteiros das sementes entram no manifesto quando a amostra for tirada.

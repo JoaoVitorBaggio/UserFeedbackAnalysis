@@ -6,6 +6,8 @@ colapsar para duas classes.
 
 O checkpoint padrão é ``cardiffnlp/twitter-roberta-base-sentiment-latest``
 (RoBERTa-base, TweetEval / TimeLMs). O card expõe Negative, Neutral e Positive.
+A alternativa de três classes, que não é a corrida principal, é
+``j-hartmann/sentiment-roberta-large-english-3-classes``.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from typing import Mapping
 from user_feedback_analysis.labels import Label
 
 DEFAULT_MODEL_ID = "cardiffnlp/twitter-roberta-base-sentiment-latest"
+ALTERNATIVE_MODEL_ID = "j-hartmann/sentiment-roberta-large-english-3-classes"
 
 SENTIMENT_TO_LABEL: dict[str, Label] = {
     "positive": Label.SAT,
