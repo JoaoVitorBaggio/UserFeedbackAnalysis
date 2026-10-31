@@ -1,0 +1,8 @@
+# Corrida real do baseline e carga do Hub. Os testes de harness, mapa,
+# partição, dry-run e stubs não baixam checkpoint nem dataset.
+torch>=2.2
+transformers>=4.44
+datasets>=2.19
+
+# Testes.
+pytest>=8.0

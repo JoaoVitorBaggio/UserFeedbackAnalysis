@@ -1,0 +1,18 @@
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Thanks, this is perfect.", "Satisfaction": true, "Disatisfaction": false, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 1, "Role": "Agent", "Content": "Glad it helped.", "Satisfaction": true, "Disatisfaction": false, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "This is still wrong, fix it.", "Satisfaction": false, "Disatisfaction": true, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 1, "Role": "Agent", "Content": "Sorry, trying a different approach.", "Satisfaction": false, "Disatisfaction": true, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Translate this paragraph into English.", "Satisfaction": false, "Disatisfaction": false, "State": "NEWTOPIC"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Great answer, thank you.", "Satisfaction": true, "Disatisfaction": false, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "That does not work at all.", "Satisfaction": false, "Disatisfaction": true, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Write a short poem about rain.", "Satisfaction": false, "Disatisfaction": false, "State": "NEWTOPIC"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Both flags are set on this turn.", "Satisfaction": true, "Disatisfaction": true, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Still broken after the last change.", "Satisfaction": false, "Disatisfaction": true, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Perfect, exactly what I needed.", "Satisfaction": true, "Disatisfaction": false, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "List three colors.", "Satisfaction": false, "Disatisfaction": false, "State": "NEWTOPIC"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "   ", "Satisfaction": false, "Disatisfaction": false, "State": "NEWTOPIC"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Thanks, great work.", "Satisfaction": true, "Disatisfaction": false, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "Write a function that adds two numbers.", "Satisfaction": false, "Disatisfaction": false, "State": "NEWTOPIC"}
+{"TurnId": 1, "UtterranceId": 1, "Role": "Agent", "Content": "def add(a, b): return a + b", "Satisfaction": false, "Disatisfaction": false, "State": "NEWTOPIC"}
+{"TurnId": 2, "UtterranceId": 2, "Role": "User", "Content": "Thanks, this is perfect.", "Satisfaction": true, "Disatisfaction": false, "State": "FEEDBACK"}
+{"TurnId": 1, "UtterranceId": 0, "Role": "User", "Content": "The last change failed badly.", "Satisfaction": "false", "Dissatisfaction": "true", "State": "FEEDBACK"}
