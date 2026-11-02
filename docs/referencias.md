@@ -14,7 +14,7 @@ O card do dataset (consulta em out/2026) declara licença Open Data Commons Attr
 
 ## Trabalho próximo
 
-Nota do grupo (call e chat de 31/10/2026): não há modelo aberto treinado no `sat_dsat_annotation` com as classes SAT, DSAT e sem sinal. Esta seção não é uma busca exaustiva da literatura, e não há número de acerto deste repositório.
+Nota do grupo (call e chat de 31/10/2026): não há modelo aberto treinado no `sat_dsat_annotation` com as classes SAT, DSAT e sem sinal. Esta seção não é uma busca exaustiva da literatura. O macro F1 medido do baseline Cardiff está em [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). Os números desta página não são esse resultado.
 
 O modelo aberto mais próximo que o grupo cita é o **feedback-detector**: classificador ModernBERT, cerca de 0,1B parâmetros no card, [llm-semantic-router/feedback-detector](https://huggingface.co/llm-semantic-router/feedback-detector) (consulta em 31/10/2026). O card lista quatro classes: `SAT`, `NEED_CLARIFICATION`, `WRONG_ANSWER`, `WANT_DIFFERENT`. A taxonomia não é a deste trabalho (não há DSAT nem sem sinal; insatisfação aparece partida em esclarecimento, resposta errada e pedido de outra resposta). Esse modelo não esvazia a contribuição daqui: o alvo, o corpus e as três classes continuam outros.
 

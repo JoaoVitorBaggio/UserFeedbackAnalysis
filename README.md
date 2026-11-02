@@ -2,10 +2,11 @@
 
 Trabalho prático de PLN (INF01100, UFRGS 2026/2, Grupo 16: João Vítor Baggio e Nikolas Cunha Chemale).
 
-Nenhum experimento foi executado. Não há resultado numérico neste repositório.
+O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800, 0.4754 e 0.4836. Transformer e LLM ainda não têm número. A nota está em [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md).
 
 - [Problema, escopo e decisões](docs/definicao.md)
 - [Protocolo experimental](docs/protocolo-experimental.md)
+- [Baseline Cardiff, 2026-11-02](docs/cardiff-baseline-2026-11-02.md)
 - [Função de loss](docs/funcao-de-loss.md)
 - [Referências](docs/referencias.md)
 
@@ -135,9 +136,11 @@ for seed in 0 1 2; do
 done
 ```
 
-As sementes do protocolo são 0, 1 e 2, nesta ordem, nas quatro corridas. O laço acima faz uma invocação por semente. O inteiro entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Cada semente grava o próprio arquivo em `runs/`; `runs/` fica de fora do git. Nenhum desses comandos foi executado. Não há macro F1 neste repositório. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
+As sementes do protocolo são 0, 1 e 2, nesta ordem, nas quatro corridas. O laço acima faz uma invocação por semente, com o `--per-class 10000` do protocolo. O inteiro entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Cada semente grava o próprio arquivo em `runs/`; `runs/` fica de fora do git. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
 
-GTX 1060 6GB: a inferência deste RoBERTa-base em fp32 costuma caber com `--device cuda --batch-size 8`. O pico de VRAM não foi medido aqui. Se a placa recusar, use CPU ou baixe o batch.
+A corrida medida em 2026-11-02 usou o mesmo checkpoint e as mesmas sementes, com `--per-class 5000` (o laço acima pede 10000), `--strict-per-class`, `--test-fraction 0.12` e `--hf`. Macro F1: 0.4800, 0.4754 e 0.4836. Tabela, floats e o F1 por classe: [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md).
+
+GTX 1060 6GB: nessa corrida o CUDA não iniciou. O torch da UFA não tem sm_61 para essa placa. O runner caiu em CPU, batch 8. O pico de VRAM não foi medido, porque a inferência não chegou na GPU.
 
 ## LLM
 
@@ -198,4 +201,4 @@ O relatório final do braço passa pelo mesmo `evaluate`.
 
 ## O que o JSON de uma corrida não é
 
-`official_result` sai `false`. O arquivo descreve a corrida local. Copiar o macro F1 para os docs ou para o artigo pede registro do grupo, com semente, tamanho de teste, revisão do dataset e checkpoint. Este repositório não guarda esse número.
+`official_result` sai `false`. O arquivo descreve a corrida local e inclui a lista de predições. Essa lista fica em `runs/` e fora do git. A nota [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md) copia as métricas do baseline Cardiff de 2026-11-02, com semente, fração de teste, `per_class` 5000 e checkpoint. O flag continua falso: a nota não é o registro do artigo. A revisão do dataset no Hub não entrou nesse resumo.
