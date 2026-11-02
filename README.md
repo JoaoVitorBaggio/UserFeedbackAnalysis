@@ -10,7 +10,7 @@ O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800,
 - [Função de loss](docs/funcao-de-loss.md)
 - [Referências](docs/referencias.md)
 
-João Vítor Baggio: harness, baseline de sentimento, LLM zero-shot e LLM few-shot. Nikolas Cunha Chemale: fine-tuning do Transformer (braço núcleo). O código do treino fica de propósito sem loop.
+João Vítor Baggio: harness, baseline de sentimento, LLM zero-shot e LLM few-shot. Nikolas Cunha Chemale: fine-tuning do Transformer (braço núcleo).
 
 ## Layout
 
@@ -21,7 +21,7 @@ src/user_feedback_analysis/
   data/                 carga e partição do sat_dsat_annotation
   baseline/             sentimento pré-treinado → três classes
   llm/                  zero-shot e few-shot
-  transformer/          interfaces do Nikolas
+  transformer/          fine-tuning do braço núcleo
 tests/fixtures/         JSONL sintético, não é o corpus
 ```
 
@@ -176,28 +176,35 @@ O dry-run marca `dry_run: true`, `model: mock` e `official_result: false`.
 
 ## Transformer (Nikolas)
 
-Não há loop de treino. O que já dá para reutilizar:
+Encoder padrão: `bert-base-multilingual-cased`. A cabeça é linear sobre o `[CLS]`, 3 logits na ordem de `LABEL_TO_ID` (0 SAT, 1 DSAT, 2 sem sinal). A loss é `build_loss()`: `CrossEntropyLoss` sem peso. A decisão está em [docs/funcao-de-loss.md](docs/funcao-de-loss.md).
 
-```python
-from user_feedback_analysis.data import SplitConfig, load_jsonl, make_splits
-from user_feedback_analysis.harness import evaluate
-from user_feedback_analysis.transformer import (
-    LABEL_TO_ID,
-    SatisfactionDataset,
-    SatisfactionModel,
-    build_loss,
-    train_transformer,
-)
+O loop usa `make_splits` (mesmo hold-out dos outros braços), `SatisfactionDataset` e early stopping por macro F1 na validação. `--val-size` é obrigatório; o teste oficial não entra no treino nem no early stopping. A métrica da corrida sai do mesmo `evaluate`.
+
+Smoke, fixture sintética, CPU, sem baixar o encoder do Hub (os testes unitários usam um BERT minúsculo). A CLI abaixo baixa o mBERT se o id não estiver em cache:
+
+```bash
+python -m user_feedback_analysis.transformer.run \
+  --data tests/fixtures/tiny_sat_dsat.jsonl \
+  --test-size 3 --per-class 1 --val-size 3 --seed 0 \
+  --device cpu --epochs 1 --batch-size 2 --max-length 32 \
+  --output runs/transformer-smoke.json
 ```
 
-- `LABEL_TO_ID`: 0 SAT, 1 DSAT, 2 sem sinal.
-- `SatisfactionDataset`: texto e índice, a partir de `split.train` ou `split.val`.
-- `build_loss()`: `CrossEntropyLoss` sem peso. Peso de classe é recusado. A decisão está em [docs/funcao-de-loss.md](docs/funcao-de-loss.md).
-- `SatisfactionModel.forward` e `train_transformer` levantam `NotImplementedError`.
+Corrida do protocolo, uma invocação por semente. `--val-size 3000` é proposta de trabalho (o protocolo deixa o tamanho a definir). Conferir `per_class_pool_before_sample` no JSON: a validação sai do pool antes da amostra balanceada.
 
-O teste oficial não entra no treino nem no early stopping. O encoder fechado é BERT-base multilíngue ou E5-base; qualquer um dos dois serve, e o id entra no manifesto. A GPU do treino é a RTX 4060 8GB de Nikolas. Batch e comprimento de sequência nesta placa continuam limite de hardware, não hiperparâmetro medido; o pico de VRAM não foi medido aqui.
+```bash
+for seed in 0 1 2; do
+  python -m user_feedback_analysis.transformer.run \
+    --hf \
+    --test-fraction 0.12 --per-class 10000 --val-size 3000 --seed "$seed" \
+    --strict-per-class --device cuda \
+    --output "runs/transformer-seed-${seed}.json"
+done
+```
 
-O relatório final do braço passa pelo mesmo `evaluate`.
+`--encoder` troca o id; o usado entra no JSON. `--checkpoint-dir` grava o melhor `state_dict`. `--no-fp16` desliga AMP. Batch (padrão 16), `max_length` (padrão 128) e fp16 no CUDA são o limite da RTX 4060 8GB, não hiperparâmetro medido. Smoke local nessa placa, 1 época, batch 16, `max_length` 128, fp16: pico cerca de 3,4 GB alocados / 3,7 GB reservados. Se a placa recusar, baixe `--batch-size` ou `--max-length`, ou use `--grad-accum`.
+
+`official_result` sai `false`. As três seeds na base completa ficam para alinhar com o grupo depois do smoke de VRAM.
 
 ## O que o JSON de uma corrida não é
 

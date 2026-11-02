@@ -1,23 +1,36 @@
-"""Interfaces do braço núcleo. O treino é do Nikolas Chemale.
+"""Braço núcleo: fine-tuning do Transformer em SAT, DSAT e sem sinal.
 
-O que já está aqui para ele reutilizar: partição (``make_splits``), dataset de
-exemplos com índice de classe, e ``build_loss`` (cross-entropy categórica, 3
-classes, sem ponderação). ``train_transformer`` e o forward do modelo levantam
-``NotImplementedError``.
+Reutiliza a partição (``make_splits``), o dataset com índice de classe e
+``build_loss`` (cross-entropy categórica, 3 classes, sem ponderação).
+O teste oficial não entra no treino nem no early stopping. A métrica da
+corrida sai do harness compartilhado.
 """
 
 from user_feedback_analysis.transformer.dataset import LABEL_TO_ID, ID_TO_LABEL, SatisfactionDataset
 from user_feedback_analysis.transformer.loss import LOSS_NAME, N_CLASSES, build_loss
-from user_feedback_analysis.transformer.model import SatisfactionModel
-from user_feedback_analysis.transformer.train import train_transformer
+from user_feedback_analysis.transformer.model import DEFAULT_ENCODER, SatisfactionModel
+from user_feedback_analysis.transformer.train import (
+    HARDWARE_NOTE,
+    TrainConfig,
+    TrainResult,
+    predict,
+    set_seed,
+    train_transformer,
+)
 
 __all__ = [
+    "DEFAULT_ENCODER",
+    "HARDWARE_NOTE",
     "ID_TO_LABEL",
     "LABEL_TO_ID",
     "LOSS_NAME",
     "N_CLASSES",
     "SatisfactionDataset",
     "SatisfactionModel",
+    "TrainConfig",
+    "TrainResult",
     "build_loss",
+    "predict",
+    "set_seed",
     "train_transformer",
 ]
