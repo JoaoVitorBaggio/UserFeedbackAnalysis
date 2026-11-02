@@ -25,7 +25,7 @@ A loss de treino do Transformer fine-tunado é a cross-entropy categórica com 3
 | Loss de treino do Transformer | Cross-entropy categórica, 3 classes |
 | Classes | SAT, DSAT, sem sinal |
 | Sem sinal na loss | Classe própria; não é descartada |
-| Ponderação de classe no caminho mínimo | Nenhuma. O treino já mira o balanceamento de ~10 mil por classe |
+| Ponderação de classe no caminho mínimo | Nenhuma. O treino já mira o balanceamento de 5000 por classe, com `--strict-per-class` |
 | Avaliação dos três braços | O mesmo espaço de três classes |
 
 A pergunta e o `sat_dsat_annotation` são de três vias. Precisão, recall e macro F1 já são métricas multiclasse. Juntar SAT e DSAT num binário “satisfeito?” apaga a polaridade que o arquivo rotula.

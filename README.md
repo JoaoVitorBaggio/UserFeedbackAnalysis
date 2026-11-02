@@ -80,10 +80,10 @@ Ordem da partição, a do protocolo:
 
 1. Teste na distribuição dos exemplos elegíveis, separado antes do treino balanceado. `--test-fraction 0.12` é o protocolo: estratificado pelas três classes, sem rebalancear o teste. Se `--test-size` e `--test-fraction` faltarem, a fração 0.12 entra sozinha. `--test-size` continua contagem inteira sem estratificar, para smoke e fixtures. Os dois flags são exclusivos. O JSON grava fração ou contagem, semente, `stratified`, a regra e as contagens realizadas por classe (`test_class_counts`, `test_class_targets`).
 2. Validação, se `--val-size` vier. O tamanho continua em aberto. É uma contagem inteira do que restou depois do teste, nunca do teste.
-3. Treino balanceado, `--per-class` (padrão 10000). Sem sinal é amostra aleatória do pool que sobrou, não o pool inteiro.
+3. Treino balanceado. A regra fechada em 2026-11-01 é `--per-class 5000` com `--strict-per-class`. Sem sinal é amostra aleatória do pool que sobrou, não o pool inteiro. O pool de SAT depois do teste fica em cerca de 5,3 mil; 10000 com strict não fecha. O default numérico do CLI continua 10000, e strict só entra se a linha passar a flag. Na corrida de relatório, a flag é o que vale.
 4. O protocolo usa as sementes 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. `--seed` é uma semente por invocação e entra no manifesto. Quem chama repete a corrida, uma invocação para cada inteiro.
 
-Em `turn`, cada classe contribui `round half-up(n_classe × fração)` exemplos. Em `conversation`, a conversa inteira muda de lado: o realizado pode passar de 12%, e o manifesto registra alvo contra realizado. `--strict-per-class` falha se alguma classe ficar abaixo do alvo de treino. Sem essa flag, o manifesto registra o déficit.
+Em `turn`, cada classe contribui `round half-up(n_classe × fração)` exemplos. Em `conversation`, a conversa inteira muda de lado: o realizado pode passar de 12%, e o manifesto registra alvo contra realizado. `--strict-per-class` faz parte da regra de 2026-11-01: a corrida falha se alguma classe ficar abaixo de 5000. Sem essa flag, o manifesto só registra o déficit, e isso não é a corrida de relatório.
 
 `--limit` lê só um prefixo. Prefixo não é a distribuição real e não é o hold-out do experimento.
 
@@ -129,16 +129,16 @@ Corrida com o checkpoint, CPU:
 for seed in 0 1 2; do
   python -m user_feedback_analysis.baseline.run \
     --hf \
-    --test-fraction 0.12 --per-class 10000 --seed "$seed" \
+    --test-fraction 0.12 --per-class 5000 --seed "$seed" \
     --strict-per-class \
     --device cpu --batch-size 8 \
     --output "runs/baseline-seed-${seed}.json"
 done
 ```
 
-As sementes do protocolo são 0, 1 e 2, nesta ordem, nas quatro corridas. O laço acima faz uma invocação por semente, com o `--per-class 10000` do protocolo. O inteiro entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Cada semente grava o próprio arquivo em `runs/`; `runs/` fica de fora do git. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
+As sementes do protocolo são 0, 1 e 2, nesta ordem, nas quatro corridas. O laço acima é a corrida de relatório: `--per-class 5000` e `--strict-per-class`, fechados em 2026-11-01. Omitir a flag não cai nesse tamanho: o default do CLI continua 10000, e strict continua desligado. O inteiro da semente entra no JSON, junto com a fração, a regra de estratificação e as contagens por classe. Cada semente grava o próprio arquivo em `runs/`; `runs/` fica de fora do git. JSONL local troca `--hf` por `--data data/sat_dsat_annotation.jsonl`. A alternativa, na mesma partição, acrescenta `--checkpoint j-hartmann/sentiment-roberta-large-english-3-classes`.
 
-A corrida medida em 2026-11-02 usou o mesmo checkpoint e as mesmas sementes, com `--per-class 5000` (o laço acima pede 10000), `--strict-per-class`, `--test-fraction 0.12` e `--hf`. Macro F1: 0.4800, 0.4754 e 0.4836. Tabela, floats e o F1 por classe: [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md).
+A medição de 2026-11-02 seguiu essa regra, no mesmo checkpoint e nas mesmas sementes, com `--hf` e `--test-fraction 0.12`. Macro F1: 0.4800, 0.4754 e 0.4836. Tabela, floats e o F1 por classe: [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md).
 
 GTX 1060 6GB: nessa corrida o CUDA não iniciou. O torch da UFA não tem sm_61 para essa placa. O runner caiu em CPU, batch 8. O pico de VRAM não foi medido, porque a inferência não chegou na GPU.
 

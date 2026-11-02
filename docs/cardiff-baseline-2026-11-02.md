@@ -6,7 +6,7 @@ Medição do braço baseline na máquina do João (Fedora). A fonte desta nota �
 
 Checkpoint: `cardiffnlp/twitter-roberta-base-sentiment-latest`. Métrica de comparação: macro F1. Flags desta corrida: `--hf --test-fraction 0.12 --per-class 5000 --strict-per-class`, sementes 0, 1 e 2. O `per_class` realizado foi 5000 em SAT, DSAT e sem sinal, nas três sementes.
 
-O protocolo escrito e o padrão do código continuam em cerca de 10 mil por classe. 5000 é o tamanho desta medição. Trocar um pelo outro troca o hold-out. Estes macro F1 não são o braço com 10 mil.
+Essas flags são a regra fechada em 2026-11-01, não um recorte desta noite. João fechou 5000 com strict porque o pool de SAT depois do teste fica em cerca de 5,3 mil; 10000 com strict não fecha. O default numérico do CLI continua 10000. Esta corrida passou a flag.
 
 ## CPU
 
