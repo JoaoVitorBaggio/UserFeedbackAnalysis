@@ -61,7 +61,10 @@ def add_split_args(parser: argparse.ArgumentParser) -> None:
         "--per-class",
         type=int,
         default=10_000,
-        help="Alvo do treino balanceado por classe. O protocolo mira cerca de 10 mil.",
+        help=(
+            "Alvo do treino balanceado por classe. O default numérico é 10000. "
+            "A corrida de relatório passa 5000 com --strict-per-class."
+        ),
     )
     parser.add_argument(
         "--seed",

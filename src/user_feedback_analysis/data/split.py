@@ -3,7 +3,8 @@
 1. Separar o teste. O protocolo usa 12% estratificado (``test_fraction``).
    ``test_size`` inteiro continua disponível para smoke e fixtures, sem estratificar.
 2. Do restante, opcionalmente separar validação (tamanho ainda em aberto; contagem inteira).
-3. Do que sobrou, treino balanceado: cerca de 10 mil por classe.
+3. Do que sobrou, treino balanceado. A corrida de relatório pede 5000 por
+   classe, com strict. O default numérico de ``per_class`` continua 10000.
 4. Os exemplos de sem sinal do treino são amostra aleatória do pool, não o pool inteiro.
 
 A semente desta invocação entra no manifesto. O protocolo pede três sementes,

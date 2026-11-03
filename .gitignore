@@ -16,3 +16,4 @@ htmlcov/
 # src/user_feedback_analysis/data/.
 /data/
 /runs/
+/docs/decisoes-transformer.md
