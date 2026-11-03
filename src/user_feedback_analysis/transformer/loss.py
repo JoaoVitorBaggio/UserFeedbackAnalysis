@@ -2,7 +2,8 @@
 
 Decisão do grupo, em docs/funcao-de-loss.md: cross-entropy categórica com 3
 classes (SAT, DSAT, sem sinal). Sem sinal permanece classe própria. O caminho
-mínimo não pondera: o treino já mira cerca de 10 mil exemplos por classe.
+mínimo não pondera: a corrida de relatório já mira 5000 exemplos por classe,
+com strict.
 
 O baseline não treina neste corpus. O LLM não recebe gradiente aqui.
 """

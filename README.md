@@ -190,13 +190,13 @@ python -m user_feedback_analysis.transformer.run \
   --output runs/transformer-smoke.json
 ```
 
-Corrida do protocolo, uma invocação por semente. `--val-size 3000` é proposta de trabalho (o protocolo deixa o tamanho a definir). Conferir `per_class_pool_before_sample` no JSON: a validação sai do pool antes da amostra balanceada.
+Corrida de relatório, uma invocação por semente: `--per-class 5000` e `--strict-per-class`, fechados em 2026-11-01. `--val-size 3000` é proposta de trabalho (o protocolo deixa o tamanho da validação a definir). Conferir `per_class_pool_before_sample` no JSON: a validação sai do pool antes da amostra balanceada.
 
 ```bash
 for seed in 0 1 2; do
   python -m user_feedback_analysis.transformer.run \
     --hf \
-    --test-fraction 0.12 --per-class 10000 --val-size 3000 --seed "$seed" \
+    --test-fraction 0.12 --per-class 5000 --val-size 3000 --seed "$seed" \
     --strict-per-class --device cuda \
     --output "runs/transformer-seed-${seed}.json"
 done
