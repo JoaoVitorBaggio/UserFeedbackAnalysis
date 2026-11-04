@@ -7,7 +7,7 @@ O baseline Cardiff foi medido em 2026-11-02. Os outros braços não. Onde faltar
 1. Três braços no espaço `{SAT, DSAT, sem sinal}`.
 2. Um harness. As quatro corridas abaixo entram nele. Em cada semente, a comparação usa o mesmo hold-out e as mesmas métricas.
 3. Treino balanceado, 5000 exemplos por classe, com `--strict-per-class`, montado só depois de o teste estar separado. João fechou esse tamanho em 2026-11-01: o pool de SAT que sobra depois do teste fica em cerca de 5,3 mil, e 10000 com strict não fecha. Os 5000 de **sem sinal** são amostra aleatória do pool sem sinal, não o pool inteiro e não um recorte curado, salvo especificação posterior. A estimativa antiga desse pool era ~87%. A contagem elegível de 2026-11-02 não confirma esse número.
-4. Teste na distribuição real: 12% estratificado pelas três classes, separado antes da amostra de treino. O teste não é rebalanceado.
+4. Teste na distribuição real: 12% estratificado pelas três classes, separado antes da amostra de treino. O teste não é rebalanceado. Cardiff e Transformer medem esse teste inteiro. Os braços LLM medem uma subamostra estratificada de 1000 turnos desse mesmo teste (decisão de 2026-11-03). A subamostra não muda o hold-out nem o treino.
 5. Loss do braço núcleo: cross-entropy categórica de 3 classes. BCE binária fica só como ablação ou apêndice. Ver [funcao-de-loss.md](funcao-de-loss.md).
 
 O primeiro experimento a rodar é o classificador de sentimento genérico pré-treinado (baseline): é o braço mais barato e a referência para os outros (Transformer fine-tunado, LLM zero-shot e LLM few-shot).
@@ -31,7 +31,15 @@ Corrida de 2026-11-02, na máquina do João (Fedora). Checkpoint principal, seme
 
 **Transformer.** Encoder: BERT-base multilíngue ou E5-base. Os dois são aceitáveis; o id usado na corrida entra no manifesto. O loop de treino é de Nikolas Chemale, na RTX 4060 8GB. A loss é a cross-entropy categórica de 3 classes.
 
-**LLM (zero-shot e few-shot).** Modelo: Llama 3.1 8B Instruct, via Groq ou OpenRouter. O id da API entra no JSON da corrida. Cada exemplo recebe K=3 inferências; o rótulo entregue ao harness é o voto majoritário (a moda). Um placar 2–1 tem moda. Três rótulos diferentes não têm moda única: o código usa a primeira inferência entre as empatadas e grava `tie_break: first_inference`. A call de 31/10/2026 deixou esse desempate em aberto; esta é a regra implementada. Temperatura 0 não é exigida; o valor usado entra no JSON. Se `--temperature` não vier, o cliente envia 0.7 (padrão local, para as três amostras poderem divergir; não é hiperparâmetro medido). O número de demonstrações do few-shot continua **a definir**. O teste não entra no prompt.
+**LLM (zero-shot e few-shot).** Decisão de 2026-11-03 (America/Sao_Paulo), João Vítor Baggio. O modelo destas corridas é `openai/gpt-oss-20b`, na Groq. Isso revoga o requisito de Llama 3.1 8B Instruct fechado na call de 31/10/2026. A conta Groq do João não lista mais Llama 3.1 8B; esse modelo não entra nestas corridas. O id vai em `LLM_MODEL` e no JSON. A base compatível com a API da OpenAI é `OPENAI_BASE_URL=https://api.groq.com/openai/v1`. `OPENAI_API_KEY` fica fora do repositório.
+
+A avaliação dos braços LLM não percorre o teste oficial inteiro. Na medição de 2026-11-02 esse teste ficou em cerca de 63 mil turnos, e K=3 ao vivo nesse volume não fecha. João fechou uma subamostra estratificada de 1000 turnos, tirada depois do split de 12%. Os alvos por classe saem dos maiores restos sobre a mistura desse teste: a subamostra não rebalanceia e não redesenha o treino. Cardiff e Transformer continuam no teste oficial completo, salvo outra nota. As sementes continuam 0, 1 e 2.
+
+Cada exemplo avaliado recebe K=3 inferências; o rótulo entregue ao harness é o voto majoritário (a moda). Um placar 2–1 tem moda. Três rótulos diferentes não têm moda única: o código usa a primeira inferência entre as empatadas e grava `tie_break: first_inference`. A call de 31/10/2026 deixou esse desempate em aberto; esta é a regra implementada. Temperatura 0 não é exigida; o valor usado entra no JSON. Se `--temperature` não vier, o cliente envia 0.7 (padrão local, para as três amostras poderem divergir; não é hiperparâmetro medido).
+
+Few-shot: k=3 demonstrações, só do treino, fechado em 2026-11-03. Antes o número estava em aberto. Esse k não é o K=3 das inferências. O teste, inclusive a parte que ficou de fora da subamostra, não entra no prompt.
+
+`official_result` no JSON do LLM sai `true` só na chamada real que casa com essa decisão: modelo `openai/gpt-oss-20b`, base da Groq, fração de teste 0.12, `--test-subsample 1000`, `--per-class 5000 --strict-per-class`, `--inferences 3`, few-shot com k=3, semente 0, 1 ou 2. Nesse caso, `true` quer dizer que a chamada é o protocolo de LLM fechado em 2026-11-03. O arquivo continua em `runs/`, fora do git, e não é sozinho o registro do artigo. Dry-run e qualquer outro arranjo ficam `false`, com a lista `protocol_deviations`. Cardiff e Transformer seguem com `official_result` falso. A nota do baseline não usa a regra nova.
 
 ## Harness
 
@@ -43,7 +51,7 @@ O harness calcula precisão, recall e **macro F1** (por classe quando o relatór
 
 ## O que fica igual entre os braços
 
-- O mesmo teste, na distribuição real, sem rebalancear.
+- O mesmo teste oficial, 12% estratificado, na distribuição real, sem rebalancear. Cardiff e Transformer avaliam esse teste inteiro. O LLM avalia 1000 turnos estratificados desse mesmo teste (decisão de 2026-11-03). A subamostra não muda o hold-out nem o treino.
 - O mesmo espaço de rótulo.
 - As mesmas métricas, no mesmo harness.
 - Nenhum braço vê o teste no treino, no few-shot ou no early stopping.
@@ -58,12 +66,15 @@ Ordem fechada:
 2. Do que sobrou, montar o treino balanceado: 5000 SAT, 5000 DSAT, 5000 sem sinal, com `--strict-per-class`. João fechou esse tamanho em 2026-11-01. O pool de SAT depois do teste fica em cerca de 5,3 mil; 10000 com strict não fecha.
 3. Os 5000 **sem sinal** saem por amostra aleatória do pool sem sinal. Não é o pool inteiro. Não é subconjunto escolhido à mão, salvo especificação posterior. A estimativa antiga desse pool era ~87%; a contagem elegível de 2026-11-02 está na nota do baseline.
 4. Validação: **a definir**, tirada do lado de treino. O teste oficial não entra em early stopping.
+5. Só nos braços LLM, e só quando `--test-subsample` vem: da lista de teste já fechada, tirar essa quantidade de turnos, estratificada, sem rebalancear. A decisão de 2026-11-03 usa 1000. Sem a flag, o código avalia o teste inteiro. Baseline e Transformer não têm essa flag.
 
-As três sementes do protocolo são 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. Cada semente redesenha a partição e, no Transformer, o treino. O hold-out de uma semente é o mesmo nos quatro braços. Cada semente entra no manifesto da corrida. O harness registra cada semente; agregar os três macro F1 não foi fechado.
+As três sementes do protocolo são 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. Cada semente redesenha a partição e, no Transformer, o treino. O hold-out de uma semente é o mesmo nos quatro braços. O LLM não troca esse hold-out: pontua uma subamostra dele. Cada semente entra no manifesto da corrida. O harness registra cada semente; agregar os três macro F1 não foi fechado.
 
 A unidade do split (conversa ou turno) está **a definir** na inspeção do arquivo. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Se a unidade for a conversa, não cortar conversa prevalece sobre a fração exata: o tamanho realizado pode passar de 12%. A estratificação continua o alvo.
 
 O código implementa essa fração em `--test-fraction` (padrão 0.12 quando `--test-size` não vem). Em `turn`, cada classe contribui o arredondamento half-up de `n_classe × 0.12`. Em `conversation`, a conversa inteira fica de um lado só; a chave é o rótulo majoritário dos turnos elegíveis, e empate de contagem segue SAT, DSAT, sem sinal. O teste não é rebalanceado. `--test-size` inteiro permanece para smoke, sem estratificar. Semente, fração ou contagem, regra e contagens realizadas por classe entram no JSON.
+
+`--test-subsample` não repete essa fração. Só existe no runner de LLM e só roda depois do split. Os alvos saem dos maiores restos sobre as contagens do teste oficial; um `Random(seed)` próprio embaralha cada classe e fica com o prefixo do alvo. O tamanho pedido, o realizado e as contagens entram em `test_subsample` no JSON da corrida. O manifesto do split continua sendo o teste oficial inteiro.
 
 O treino do relatório é `--per-class 5000` com `--strict-per-class`. O default numérico de `--per-class` no CLI continua 10000, e strict continua desligado se a flag não vier. A flag da corrida é o que vale. Sem ela, o código não aplica a regra fechada em 2026-11-01.
 

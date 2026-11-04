@@ -2,7 +2,7 @@
 
 Medição do braço baseline na máquina do João (Fedora). A fonte desta nota é o resumo do harness das sementes 0, 1 e 2, datado de 2026-11-02. Os JSON com predição (`runs/baseline-cardiff-seed0.json`, `runs/baseline-cardiff-seed1.json`, `runs/baseline-cardiff-seed2.json`) ficam fora do git.
 
-`official_result` está `false` nas três sementes. O harness grava esse flag em toda corrida. Esta nota copia as métricas medidas. Não é o registro do artigo.
+`official_result` está `false` nas três sementes. O harness grava esse flag em toda corrida que não o sobrescreve. O braço LLM, a partir da decisão de 2026-11-03, pode gravar `true` quando a chamada casa com o protocolo novo; esta nota do baseline não usa essa regra. Esta nota copia as métricas medidas. Não é o registro do artigo.
 
 Checkpoint: `cardiffnlp/twitter-roberta-base-sentiment-latest`. Métrica de comparação: macro F1. Flags desta corrida: `--hf --test-fraction 0.12 --per-class 5000 --strict-per-class`, sementes 0, 1 e 2. O `per_class` realizado foi 5000 em SAT, DSAT e sem sinal, nas três sementes.
 

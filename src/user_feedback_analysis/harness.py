@@ -58,7 +58,12 @@ def build_run_record(
     predictions: list[dict[str, str]],
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    """Registro de uma corrida. ``official_result`` fica falso: os docs não guardam métrica."""
+    """Registro de uma corrida.
+
+    ``official_result`` sai falso. O arquivo não é o registro do artigo.
+    O runner de LLM pode sobrescrever o campo quando a chamada casa com
+    a decisão de 2026-11-03. Cardiff e Transformer não fazem isso.
+    """
     payload: dict[str, object] = {
         "arm": arm,
         "official_result": False,
