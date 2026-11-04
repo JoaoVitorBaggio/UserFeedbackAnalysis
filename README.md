@@ -196,6 +196,8 @@ done
 
 O mesmo laço está em `scripts/run-llm-gptoss20b-sub1k.sh`. Sem argumento, usa `--hf`. Com um JSONL, troca para `--data`. O script recusa outro modelo e outra base, e não imprime a chave. `runs/` fica fora do git.
 
+O cliente manda `User-Agent: Mozilla/5.0 (compatible; UserFeedbackAnalysis/llm-client)`. Sem esse cabeçalho, a Cloudflare na frente da Groq responde HTTP 403 com `error code: 1010` ao urllib, e a corrida no Fedora não chega na API. HTTP 429, HTTP 5xx e falha transitória de rede repetem no máximo 8 vezes. A espera usa `try again in Xs` (ou `ms`) e o header `Retry-After` quando vêm no erro; senão dobra a partir de 1s. O piso é 0,05s e o teto é 120s, então uma pista de horas (cota diária) não trava a noite: esgotadas as tentativas, segue o `RuntimeError`. 401, 403 e URL inválida falham na hora.
+
 Sem `OPENAI_API_KEY`, a corrida cai em dry-run e não chama a rede. Chave presente sem `LLM_MODEL` é erro, para não gravar mock no lugar de uma chamada que parecia real. `--live` exige as duas. `--dry-run` não chama a rede mesmo com chave.
 
 Cada exemplo avaliado recebe `--inferences` chamadas (padrão K=3). O rótulo entregue ao harness é a moda. Sem moda única, o desempate é a primeira inferência entre as empatadas (`tie_break: first_inference` no JSON). Para K=3, isso é o caso 1–1–1; um placar 2–1 fica na moda. `--temperature` é livre. O padrão do cliente é 0.7, para as K amostras poderem divergir num endpoint determinístico; não é hiperparâmetro medido e o protocolo não exige 0. K, a regra do voto, a temperatura e os votos entram no JSON.

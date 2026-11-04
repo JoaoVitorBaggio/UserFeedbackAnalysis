@@ -1,4 +1,9 @@
+import http.client
+import io
 import json
+import ssl
+import urllib.error
+from email.message import EmailMessage
 from pathlib import Path
 
 import pytest
@@ -9,6 +14,10 @@ from user_feedback_analysis.harness import evaluate
 from user_feedback_analysis.labels import Label
 from user_feedback_analysis.llm.client import (
     DEFAULT_BASE_URL,
+    LLM_MAX_ATTEMPTS,
+    LLM_USER_AGENT,
+    _RETRY_CAP_S,
+    chat_complete,
     classify_text,
     classify_votes,
     resolve_dry_run,
@@ -99,6 +108,7 @@ def test_live_client_parses_a_fake_response(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "dummy-model")
     monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:9/v1/")
     captured: dict[str, object] = {}
+    user_agents: list[str | None] = []
 
     class _Response:
         def __enter__(self):
@@ -118,9 +128,15 @@ def test_live_client_parses_a_fake_response(monkeypatch):
         captured["auth"] = request.get_header("Authorization")
         captured["body"] = json.loads(request.data.decode("utf-8"))
         captured["timeout"] = timeout
+        # urllib guarda o cabeçalho como "User-agent".
+        user_agents.append(request.get_header("User-agent"))
         return _Response()
 
+    def _no_sleep(seconds: float) -> None:
+        raise AssertionError(f"chamada bem-sucedida não espera ({seconds})")
+
     monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", _no_sleep)
     label = classify_text(
         "This is still wrong, fix it.",
         [],
@@ -133,6 +149,9 @@ def test_live_client_parses_a_fake_response(monkeypatch):
     assert captured["calls"] == 3
     assert captured["url"] == "http://localhost:9/v1/chat/completions"
     assert captured["auth"] == "Bearer sk-test"
+    assert user_agents == [LLM_USER_AGENT] * 3
+    assert LLM_USER_AGENT.startswith("Mozilla/5.0")
+    assert "UserFeedbackAnalysis/llm-client" in LLM_USER_AGENT
     assert captured["body"]["temperature"] == 0.7
     assert captured["body"]["model"] == "dummy-model"
     assert "sk-test" not in captured["body"]["messages"][1]["content"]
@@ -148,6 +167,225 @@ def test_live_client_parses_a_fake_response(monkeypatch):
     )
     assert captured["body"]["temperature"] == 0
     assert captured["calls"] == 4
+    assert user_agents == [LLM_USER_AGENT] * 4
+
+
+def _http_error(
+    code: int,
+    body: str,
+    headers: EmailMessage | None = None,
+) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "http://localhost:9/v1/chat/completions",
+        code,
+        "error",
+        headers if headers is not None else EmailMessage(),
+        io.BytesIO(body.encode("utf-8")),
+    )
+
+
+def _ok_response(content: str = "SAT"):
+    encoded = json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return encoded
+
+    return _Response()
+
+
+def _install_urlopen(monkeypatch, outcomes: list[object]) -> dict[str, object]:
+    seen: dict[str, object] = {"calls": 0, "agents": [], "auths": []}
+
+    def _urlopen(request, timeout=0):
+        seen["calls"] = int(seen["calls"]) + 1
+        seen["agents"].append(request.get_header("User-agent"))
+        seen["auths"].append(request.get_header("Authorization"))
+        seen["timeout"] = timeout
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    return seen
+
+
+def test_chat_complete_retries_429_using_the_server_hint(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    body = (
+        '{"error":{"message":"Rate limit reached for model `openai/gpt-oss-20b` '
+        'on tokens per minute (TPM): Limit 8000, Used 7600, Requested 950. '
+        'Please try again in 1.5s.","type":"tokens","code":"rate_limit_exceeded"}}'
+    )
+    seen = _install_urlopen(
+        monkeypatch,
+        [_http_error(429, body), _ok_response("SAT")],
+    )
+    assert chat_complete("Classify.", model="openai/gpt-oss-20b", timeout=5) == "SAT"
+    assert seen["calls"] == 2
+    assert seen["agents"] == [LLM_USER_AGENT, LLM_USER_AGENT]
+    assert seen["auths"] == ["Bearer sk-test", "Bearer sk-test"]
+    assert seen["timeout"] == 5
+    assert sleeps == [1.5]
+
+    precise = _install_urlopen(
+        monkeypatch,
+        [_http_error(429, "Please try again in 5.289s."), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="openai/gpt-oss-20b") == "SAT"
+    assert precise["calls"] == 2
+    assert sleeps == pytest.approx([5.289])
+
+    headers = EmailMessage()
+    headers["Retry-After"] = "4"
+    longer_header = _install_urlopen(
+        monkeypatch,
+        [_http_error(429, "Please try again in 1.5s.", headers), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert longer_header["calls"] == 2
+    assert sleeps == [4.0]
+
+    longer_body = EmailMessage()
+    longer_body["Retry-After"] = "2"
+    _install_urlopen(
+        monkeypatch,
+        [_http_error(429, "Please try again in 4.1s.", longer_body), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert sleeps == pytest.approx([4.1])
+
+    _install_urlopen(
+        monkeypatch,
+        [_http_error(429, "Please try again in 250ms."), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert sleeps == pytest.approx([0.25])
+
+
+def test_chat_complete_stops_retrying_429(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [_http_error(429, "Please try again in 9s.") for _ in range(LLM_MAX_ATTEMPTS)],
+    )
+    with pytest.raises(
+        RuntimeError,
+        match=rf"LLM HTTP 429:.*após {LLM_MAX_ATTEMPTS} tentativas",
+    ):
+        chat_complete("Classify.", model="openai/gpt-oss-20b")
+    assert seen["calls"] == LLM_MAX_ATTEMPTS
+    assert sleeps == [9.0] * (LLM_MAX_ATTEMPTS - 1)
+    assert seen["agents"] == [LLM_USER_AGENT] * LLM_MAX_ATTEMPTS
+
+    capped = _install_urlopen(
+        monkeypatch,
+        [_http_error(429, "Please try again in 10000s."), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert capped["calls"] == 2
+    assert sleeps == [_RETRY_CAP_S]
+
+
+def test_chat_complete_retries_5xx_and_transient_network(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _http_error(503, ""),
+            _http_error(500, "upstream"),
+            _ok_response("DSAT"),
+        ],
+    )
+    assert chat_complete("Classify.", model="m", timeout=3) == "DSAT"
+    assert seen["calls"] == 3
+    assert sleeps == [1.0, 2.0]
+
+    timed_out = _install_urlopen(
+        monkeypatch,
+        [TimeoutError("timed out"), _ok_response("SAT")],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert timed_out["calls"] == 2
+    assert sleeps == [1.0]
+
+    reset = _install_urlopen(
+        monkeypatch,
+        [urllib.error.URLError(ConnectionResetError("connection reset")), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert reset["calls"] == 2
+    assert sleeps == [1.0]
+
+    partial = _install_urlopen(
+        monkeypatch,
+        [http.client.IncompleteRead(b"partial"), _ok_response()],
+    )
+    sleeps.clear()
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert partial["calls"] == 2
+    assert sleeps == [1.0]
+
+
+def test_chat_complete_does_not_retry_permanent_failures(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+
+    cloudflare = _install_urlopen(
+        monkeypatch,
+        [_http_error(403, "error code: 1010")],
+    )
+    with pytest.raises(RuntimeError, match=r"LLM HTTP 403: error code: 1010$"):
+        chat_complete("Classify.", model="m")
+    assert cloudflare["calls"] == 1
+    assert sleeps == []
+
+    unauthorized = _install_urlopen(
+        monkeypatch,
+        [_http_error(401, '{"error":{"message":"Invalid API Key"}}')],
+    )
+    with pytest.raises(RuntimeError, match="LLM HTTP 401"):
+        chat_complete("Classify.", model="m")
+    assert unauthorized["calls"] == 1
+
+    bad_url = _install_urlopen(
+        monkeypatch,
+        [urllib.error.URLError("unknown url type: ftp")],
+    )
+    with pytest.raises(RuntimeError, match="unknown url type: ftp$"):
+        chat_complete("Classify.", model="m")
+    assert bad_url["calls"] == 1
+
+    cert = _install_urlopen(
+        monkeypatch,
+        [urllib.error.URLError(ssl.SSLError("certificate verify failed"))],
+    )
+    with pytest.raises(RuntimeError, match=r"certificate verify failed"):
+        chat_complete("Classify.", model="m")
+    assert cert["calls"] == 1
+    assert sleeps == []
 
 
 def test_llm_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypatch):
