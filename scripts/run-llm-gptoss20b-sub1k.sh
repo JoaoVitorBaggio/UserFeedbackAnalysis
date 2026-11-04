@@ -10,10 +10,19 @@
 #   OPENAI_BASE_URL=https://api.deepinfra.com/v1/openai
 #   LLM_MODEL=openai/gpt-oss-20b
 #
-# O cliente manda User-Agent estável e repete 429, 5xx e falha
-# transitória de rede com espera limitada. A primeira 429 não derruba
-# a semente. O cabeçalho nasceu porque a Cloudflare da Groq respondia
-# 403 "error code: 1010" ao urllib; continua em toda chamada.
+# O cliente manda User-Agent estável e repete 429, 5xx, falha
+# transitória de rede e resposta sem rótulo único (recusa ou content
+# vazio) com espera limitada, na mesma fila. A primeira 429 ou a
+# primeira recusa não derruba a semente. O cabeçalho nasceu porque a
+# Cloudflare da Groq respondia 403 "error code: 1010" ao urllib;
+# continua em toda chamada.
+#
+# Cada semente grava checkpoint no próprio --output depois de cada
+# exemplo concluído (replace atômico). Rodar este script de novo
+# continua desse arquivo: voto pronto não volta para a DeepInfra.
+# Outra corrida no mesmo caminho é erro e o arquivo não é apagado.
+# Recusa que esgota as tentativas para a semente; o checkpoint fica,
+# e a próxima invocação repete esse exemplo.
 #
 # Uso, na raiz do repositório ou de qualquer diretório:
 #   scripts/run-llm-gptoss20b-sub1k.sh

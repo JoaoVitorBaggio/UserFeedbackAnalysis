@@ -54,11 +54,19 @@ def test_parse_label(text, expected):
     assert parse_label(text) is expected
 
 
+# Recusa real do gpt-oss em 2026-11-04, com apóstrofo curvo.
+_REFUSAL = "I\u2019m sorry, but I can\u2019t help with that."
+
+
 def test_parse_rejects_two_labels_and_empty_text():
     with pytest.raises(ValueError):
         parse_label("SAT and DSAT")
     with pytest.raises(ValueError):
         parse_label("hello")
+    with pytest.raises(ValueError, match="rótulo único"):
+        parse_label(_REFUSAL)
+    with pytest.raises(ValueError, match="rótulo único"):
+        parse_label("")
 
 
 def test_zero_shot_prompt_has_no_examples():
@@ -190,8 +198,8 @@ def _http_error(
     )
 
 
-def _ok_response(content: str = "SAT"):
-    encoded = json.dumps({"choices": [{"message": {"content": content}}]}).encode("utf-8")
+def _message_response(message: dict):
+    encoded = json.dumps({"choices": [{"message": message}]}).encode("utf-8")
 
     class _Response:
         def __enter__(self):
@@ -206,14 +214,21 @@ def _ok_response(content: str = "SAT"):
     return _Response()
 
 
+def _ok_response(content: str = "SAT"):
+    return _message_response({"content": content})
+
+
 def _install_urlopen(monkeypatch, outcomes: list[object]) -> dict[str, object]:
-    seen: dict[str, object] = {"calls": 0, "agents": [], "auths": []}
+    seen: dict[str, object] = {"calls": 0, "agents": [], "auths": [], "bodies": []}
 
     def _urlopen(request, timeout=0):
         seen["calls"] = int(seen["calls"]) + 1
         seen["agents"].append(request.get_header("User-agent"))
         seen["auths"].append(request.get_header("Authorization"))
         seen["timeout"] = timeout
+        raw_body = request.data
+        if isinstance(raw_body, bytes):
+            seen["bodies"].append(json.loads(raw_body.decode("utf-8")))
         outcome = outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -392,6 +407,330 @@ def test_chat_complete_does_not_retry_permanent_failures(monkeypatch):
         chat_complete("Classify.", model="m")
     assert cert["calls"] == 1
     assert sleeps == []
+
+
+def _bodies(seen: dict[str, object]) -> list[dict]:
+    bodies = seen["bodies"]
+    assert isinstance(bodies, list)
+    return bodies
+
+
+def test_chat_complete_retries_a_refusal_then_keeps_the_prompt(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _ok_response(_REFUSAL),
+            _ok_response("The label is DSAT."),
+        ],
+    )
+    assert chat_complete("Classify this.", model="openai/gpt-oss-20b", temperature=0.7) == (
+        "The label is DSAT."
+    )
+    assert seen["calls"] == 2
+    assert sleeps == [1.0]
+    bodies = _bodies(seen)
+    assert bodies[0] == bodies[1]
+    assert bodies[0]["temperature"] == 0.7
+    assert bodies[0]["messages"][1]["content"] == "Classify this."
+    assert "sk-test" not in json.dumps(bodies)
+
+
+def test_chat_complete_retries_empty_content_and_ignores_reasoning(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    hidden = "cadeia secreta SAT"
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _message_response({"content": None, "reasoning_content": hidden}),
+            _message_response({"reasoning_content": "DSAT"}),
+            _message_response(
+                {"content": "  ", "reasoning_content": hidden},
+            ),
+            _message_response(
+                {"content": "DSAT", "reasoning_content": "SAT and " + _REFUSAL},
+            ),
+        ],
+    )
+    assert chat_complete("Classify.", model="m") == "DSAT"
+    assert seen["calls"] == 4
+    assert sleeps == [1.0, 2.0, 4.0]
+
+
+def test_chat_complete_shares_attempt_budget_between_429_and_refusal(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _http_error(429, "Please try again in 1.5s."),
+            _ok_response(_REFUSAL),
+            _ok_response("SAT"),
+        ],
+    )
+    assert chat_complete("Classify.", model="m", temperature=0.7) == "SAT"
+    assert seen["calls"] == 3
+    # A recusa no meio da fila não recomeça o backoff em 1s.
+    assert sleeps == [1.5, 2.0]
+    assert _bodies(seen)[1] == _bodies(seen)[2]
+
+
+def test_chat_complete_reads_the_label_from_content_when_reasoning_is_present(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _message_response(
+                {
+                    "content": "SAT",
+                    "reasoning_content": "I’m unsure. DSAT. " + _REFUSAL,
+                }
+            )
+        ],
+    )
+    assert chat_complete("Classify.", model="m") == "SAT"
+    assert seen["calls"] == 1
+    assert sleeps == []
+
+
+def test_chat_complete_stops_retrying_a_refusal_or_empty_content(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)],
+    )
+    with pytest.raises(ValueError, match=rf"após {LLM_MAX_ATTEMPTS} tentativas") as refusal:
+        chat_complete("Classify.", model="m")
+    assert _REFUSAL in str(refusal.value)
+    assert "rótulo único" in str(refusal.value)
+    assert seen["calls"] == LLM_MAX_ATTEMPTS
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+
+    hidden = "cadeia secreta DSAT"
+    empty = _install_urlopen(
+        monkeypatch,
+        [
+            _message_response({"content": "", "reasoning_content": hidden})
+            for _ in range(LLM_MAX_ATTEMPTS)
+        ],
+    )
+    sleeps.clear()
+    with pytest.raises(ValueError, match=rf"content vazio.*após {LLM_MAX_ATTEMPTS} tentativas") as blank:
+        chat_complete("Classify.", model="m")
+    assert hidden not in str(blank.value)
+    assert "DSAT" not in str(blank.value)
+    assert empty["calls"] == LLM_MAX_ATTEMPTS
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+
+
+def _raw_response(payload: dict):
+    encoded = json.dumps(payload).encode("utf-8")
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return encoded
+
+    return _Response()
+
+
+def test_chat_complete_does_not_retry_a_broken_payload(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+
+    listed = _install_urlopen(
+        monkeypatch,
+        [_message_response({"content": ["SAT"]})],
+    )
+    with pytest.raises(RuntimeError, match="não é texto"):
+        chat_complete("Classify.", model="m")
+    assert listed["calls"] == 1
+    assert sleeps == []
+
+    broken = _install_urlopen(monkeypatch, [_raw_response({"nope": True})])
+    with pytest.raises(RuntimeError, match="sem choices"):
+        chat_complete("Classify.", model="m")
+    assert broken["calls"] == 1
+
+    garbled = _install_urlopen(monkeypatch, [_raw_response_bytes(b"not-json")])
+    with pytest.raises(RuntimeError, match="sem choices"):
+        chat_complete("Classify.", model="m")
+    assert garbled["calls"] == 1
+    assert sleeps == []
+
+
+def _raw_response_bytes(payload: bytes):
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return payload
+
+    return _Response()
+
+
+def test_classify_votes_retries_one_inference_inside_chat_complete(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _ok_response(_REFUSAL),
+            _ok_response("SAT"),
+            _message_response({"content": None, "reasoning_content": "SAT"}),
+            _ok_response("DSAT"),
+            _ok_response("The label is DSAT."),
+        ],
+    )
+    voted = classify_votes(
+        "List three colors.",
+        [],
+        dry_run=False,
+        model="dummy-model",
+        max_chars=100,
+        k=3,
+        temperature=0.4,
+    )
+    assert voted.votes == (Label.SAT, Label.DSAT, Label.DSAT)
+    assert voted.label is Label.DSAT
+    assert voted.decision == "majority"
+    assert seen["calls"] == 5
+    assert sleeps == [1.0, 1.0]
+    bodies = _bodies(seen)
+    assert all(body["temperature"] == 0.4 for body in bodies)
+    assert bodies[0] == bodies[1]
+    assert bodies[0]["messages"][1]["content"] == bodies[3]["messages"][1]["content"]
+
+
+def test_injected_complete_is_not_wrapped_in_a_second_retry(monkeypatch):
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    calls = {"n": 0}
+
+    def complete(prompt: str, *, model: str, timeout: float, temperature: float) -> str:
+        calls["n"] += 1
+        return _REFUSAL
+
+    with pytest.raises(ValueError, match="rótulo único"):
+        classify_votes(
+            "List three colors.",
+            [],
+            dry_run=False,
+            model="dummy-model",
+            max_chars=None,
+            k=1,
+            complete=complete,
+        )
+    assert calls["n"] == 1
+    assert sleeps == []
+
+
+def test_refusal_leaves_a_checkpoint_and_resume_skips_finished_examples(
+    tiny_path: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepinfra.com/v1/openai")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    output = tmp_path / "live.json"
+    args = [
+        "--data",
+        str(tiny_path),
+        "--shot",
+        "zero",
+        "--test-size",
+        "3",
+        "--per-class",
+        "1",
+        "--seed",
+        "0",
+        "--inferences",
+        "1",
+        "--live",
+        "--output",
+        str(output),
+    ]
+    first = _install_urlopen(
+        monkeypatch,
+        [_ok_response("SAT"), *[_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)]],
+    )
+    assert main(args) == 1
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert saved["kind"] == "llm_checkpoint"
+    assert saved["official_result"] is False
+    assert saved["next_index"] == 1
+    assert saved["n_completed"] == 1
+    assert saved["completed"][0]["pred"] == "SAT"
+    assert saved["completed"][0]["votes"] == ["SAT"]
+    assert "sk-test" not in output.read_text(encoding="utf-8")
+    assert _REFUSAL not in output.read_text(encoding="utf-8")
+    assert first["calls"] == 1 + LLM_MAX_ATTEMPTS
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+    refusal_bodies = _bodies(first)[1:]
+    assert len(refusal_bodies) == LLM_MAX_ATTEMPTS
+    assert all(body == refusal_bodies[0] for body in refusal_bodies)
+    assert refusal_bodies[0]["temperature"] == 0.7
+    n_expected = saved["n_expected"]
+    assert isinstance(n_expected, int) and n_expected > 1
+
+    second = _install_urlopen(
+        monkeypatch,
+        [_ok_response("DSAT") for _ in range(n_expected - 1)],
+    )
+    sleeps.clear()
+    assert main(args) == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert "kind" not in payload
+    assert payload["resume"]["n_reused"] == 1
+    assert payload["official_result"] is False
+    assert payload["dry_run"] is False
+    assert payload["predictions"][0]["pred"] == "SAT"
+    assert payload["predictions"][1]["pred"] == "DSAT"
+    assert [row["pred"] for row in payload["predictions"][1:]] == ["DSAT"] * (n_expected - 1)
+    assert second["calls"] == n_expected - 1
+    assert sleeps == []
+    blob = " ".join(payload["protocol_deviations"])
+    assert "checkpoint" not in blob
+    assert "recusa" not in blob
+    assert "content" not in blob
+    closed, closed_deviations = llm_official_result(
+        dry_run=False,
+        model_id=PROTOCOL_LLM_MODEL_ID,
+        base_url=PROTOCOL_LLM_BASE_URL,
+        shot="zero",
+        few_shot_k=0,
+        inferences=3,
+        test_subsample=1000,
+        test_fraction=0.12,
+        per_class=5000,
+        strict_per_class=True,
+        seed=0,
+        fallback_base_url=DEFAULT_BASE_URL,
+    )
+    assert closed is True
+    assert closed_deviations == []
+    assert "sk-test" not in output.read_text(encoding="utf-8")
 
 
 def test_llm_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypatch):
