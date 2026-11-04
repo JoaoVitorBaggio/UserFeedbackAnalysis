@@ -144,7 +144,7 @@ GTX 1060 6GB: nessa corrida o CUDA não iniciou. O torch da UFA não tem sm_61 p
 
 ## LLM
 
-Decisão de 2026-11-03 (America/Sao_Paulo). O modelo destas corridas na Groq é `openai/gpt-oss-20b`. Isso revoga Llama 3.1 8B Instruct, fechado na call de 31/10/2026: a conta Groq do João não lista mais esse modelo. Cardiff e Transformer não mudam de teste. O LLM avalia uma subamostra estratificada de 1000 turnos do teste oficial de 12%. O teste completo, cerca de 63 mil turnos na medição de 2026-11-02, com K=3 ao vivo, não fecha.
+Decisão de 2026-11-03 (America/Sao_Paulo), emendada em 2026-11-04. O modelo destas corridas continua `openai/gpt-oss-20b`. Isso revoga Llama 3.1 8B Instruct, fechado na call de 31/10/2026: a conta Groq do João não lista mais esse modelo. Em 2026-11-04 João trocou o backend para a DeepInfra. A cota gratuita diária da Groq (TPD) tinha esgotado. A rota que mandaria o mesmo modelo pela OpenRouter até a Groq foi abandonada: o valor mínimo de recarga pareceu caro. Os créditos pré-pagos da DeepInfra estão cobertos. A base da Groq (`https://api.groq.com/openai/v1`) fica revogada para estas corridas, do mesmo modo que Llama tinha sido revogado. A base aceita é `https://api.deepinfra.com/v1/openai`, a API de chat compatível com a OpenAI (consulta à documentação da DeepInfra em 2026-11-04: o POST é `{base}/chat/completions`, modelo `openai/gpt-oss-20b`). Cardiff e Transformer não mudam de teste. O LLM avalia uma subamostra estratificada de 1000 turnos do teste oficial de 12%. O teste completo, cerca de 63 mil turnos na medição de 2026-11-02, com K=3 ao vivo, não fecha.
 
 O texto classificado é o `Content` do turno do usuário, o mesmo texto do baseline. O prompt, em inglês, pede um rótulo em `{SAT, DSAT, sem sinal}`. Few-shot amostra `k` exemplos só do treino, em rodízio pelas três classes. Esse `k` foi fechado em 3 em 2026-11-03; antes estava em aberto. Não é o K=3 das inferências: K=3 é o número de inferências por exemplo. Se `--k` não vier no few-shot, a CLI usa 3. O teste, inclusive o que ficou de fora da subamostra, não entra no prompt.
 
@@ -166,14 +166,14 @@ Chamada real. A chave não entra no repositório nem na linha de comando:
 
 | Variável | Papel |
 | --- | --- |
-| `OPENAI_API_KEY` | obrigatória na chamada real |
+| `OPENAI_API_KEY` | obrigatória na chamada real. É a chave da DeepInfra. Não entra no repositório |
 | `LLM_MODEL` | obrigatória. A decisão de 2026-11-03 usa `openai/gpt-oss-20b` |
-| `OPENAI_BASE_URL` | na Groq, `https://api.groq.com/openai/v1`. Sem a variável, o cliente usa `https://api.openai.com/v1`, e isso não é a corrida fechada |
+| `OPENAI_BASE_URL` | na DeepInfra, `https://api.deepinfra.com/v1/openai`. Sem a variável, o cliente usa `https://api.openai.com/v1`, e isso não é a corrida fechada. A base da Groq foi revogada em 2026-11-04 |
 
 ```bash
-export OPENAI_BASE_URL=https://api.groq.com/openai/v1
+export OPENAI_BASE_URL=https://api.deepinfra.com/v1/openai
 export LLM_MODEL=openai/gpt-oss-20b
-# OPENAI_API_KEY fica no ambiente. Não cole a chave aqui.
+# OPENAI_API_KEY é a chave da DeepInfra. Não cole a chave aqui.
 
 for seed in 0 1 2; do
   python -m user_feedback_analysis.llm.run \
@@ -194,21 +194,21 @@ for seed in 0 1 2; do
 done
 ```
 
-O mesmo laço está em `scripts/run-llm-gptoss20b-sub1k.sh`. Sem argumento, usa `--hf`. Com um JSONL, troca para `--data`. O script recusa outro modelo e outra base, e não imprime a chave. `runs/` fica fora do git.
+O mesmo laço está em `scripts/run-llm-gptoss20b-sub1k.sh`. Sem argumento, usa `--hf`. Com um JSONL, troca para `--data`. O script recusa outro modelo e outra base, inclusive a base antiga da Groq, e não imprime a chave. `runs/` fica fora do git.
 
-O cliente manda `User-Agent: Mozilla/5.0 (compatible; UserFeedbackAnalysis/llm-client)`. Sem esse cabeçalho, a Cloudflare na frente da Groq responde HTTP 403 com `error code: 1010` ao urllib, e a corrida no Fedora não chega na API. HTTP 429, HTTP 5xx e falha transitória de rede repetem no máximo 8 vezes. A espera usa `try again in Xs` (ou `ms`) e o header `Retry-After` quando vêm no erro; senão dobra a partir de 1s. O piso é 0,05s e o teto é 120s, então uma pista de horas (cota diária) não trava a noite: esgotadas as tentativas, segue o `RuntimeError`. 401, 403 e URL inválida falham na hora.
+O cliente manda `User-Agent: Mozilla/5.0 (compatible; UserFeedbackAnalysis/llm-client)`. Esse cabeçalho foi posto porque, na Groq, a Cloudflare respondia HTTP 403 com `error code: 1010` ao urllib, e a corrida no Fedora não chegava na API. A chamada à DeepInfra leva o mesmo cabeçalho. HTTP 429, HTTP 5xx e falha transitória de rede repetem no máximo 8 vezes. A espera usa `try again in Xs` (ou `ms`) e o header `Retry-After` quando vêm no erro; senão dobra a partir de 1s. O piso é 0,05s e o teto é 120s, então uma pista de horas (cota diária) não trava a noite: esgotadas as tentativas, segue o `RuntimeError`. 401, 403 e URL inválida falham na hora.
 
 Sem `OPENAI_API_KEY`, a corrida cai em dry-run e não chama a rede. Chave presente sem `LLM_MODEL` é erro, para não gravar mock no lugar de uma chamada que parecia real. `--live` exige as duas. `--dry-run` não chama a rede mesmo com chave.
 
 Cada exemplo avaliado recebe `--inferences` chamadas (padrão K=3). O rótulo entregue ao harness é a moda. Sem moda única, o desempate é a primeira inferência entre as empatadas (`tie_break: first_inference` no JSON). Para K=3, isso é o caso 1–1–1; um placar 2–1 fica na moda. `--temperature` é livre. O padrão do cliente é 0.7, para as K amostras poderem divergir num endpoint determinístico; não é hiperparâmetro medido e o protocolo não exige 0. K, a regra do voto, a temperatura e os votos entram no JSON.
 
-A call de 31/10/2026 apontava Llama 3.1 8B Instruct, com uma rota de OpenRouter (`OPENAI_BASE_URL=https://openrouter.ai/api/v1`, `LLM_MODEL=meta-llama/llama-3.1-8b-instruct`) e o id Groq que o provedor servisse. A página de depreciação da Groq (consulta em 31/10/2026) lista `llama-3.1-8b-instant` como desligado em 16/08/2026 fora de contrato enterprise. Essa rota ficou para trás em 2026-11-03. Esta nota não é uma chamada de API.
+A call de 31/10/2026 apontava Llama 3.1 8B Instruct, com uma rota de OpenRouter (`OPENAI_BASE_URL=https://openrouter.ai/api/v1`, `LLM_MODEL=meta-llama/llama-3.1-8b-instruct`) e o id Groq que o provedor servisse. A página de depreciação da Groq (consulta em 31/10/2026) lista `llama-3.1-8b-instant` como desligado em 16/08/2026 fora de contrato enterprise. Essa rota ficou para trás em 2026-11-03. Em 2026-11-04 a própria base da Groq saiu do protocolo: a cota gratuita diária tinha esgotado, e pagar o mesmo `openai/gpt-oss-20b` via OpenRouter até a Groq foi abandonado. Esta nota não é uma chamada de API.
 
 Cada texto no prompt é cortado em `--max-chars` (padrão 4000; `0` desliga). O corte fica no JSON (`n_test_truncated`, `n_demo_truncated`) e conta os textos avaliados, já na subamostra quando a flag vem. Não é decisão do protocolo. Turnos do corpus podem ser longos; o card chega a centenas de milhares de caracteres.
 
 O JSON grava `model_id` (o `LLM_MODEL` do ambiente, ou null), `model` (`mock` no dry-run; o id na chamada real), `dry_run`, `live` e `base_url` sem usuário, senha ou query. O dry-run marca `dry_run: true`, `live: false`, `model: mock` e `official_result: false`.
 
-`official_result` sai `true` só na chamada real que casa com a decisão de 2026-11-03: `openai/gpt-oss-20b`, base da Groq, fração 0.12, `--test-subsample 1000`, `--per-class 5000 --strict-per-class`, K=3, few-shot k=3, semente 0, 1 ou 2. `true` quer dizer que a chamada é esse protocolo de LLM. O arquivo continua em `runs/`, fora do git, e não é sozinho o registro do artigo. Qualquer desvio, inclusive dry-run, fica `false`, e `protocol_deviations` diz o porquê. A regra está em `official_result_policy`. Cardiff e Transformer não usam essa regra.
+`official_result` sai `true` só na chamada real que casa com a decisão de 2026-11-03 emendada em 2026-11-04: `openai/gpt-oss-20b`, base da DeepInfra (`https://api.deepinfra.com/v1/openai`), fração 0.12, `--test-subsample 1000`, `--per-class 5000 --strict-per-class`, K=3, few-shot k=3, semente 0, 1 ou 2. A base da Groq não entra. `true` quer dizer que a chamada é esse protocolo de LLM. O arquivo continua em `runs/`, fora do git, e não é sozinho o registro do artigo. Qualquer desvio, inclusive dry-run, fica `false`, e `protocol_deviations` diz o porquê. A regra está em `official_result_policy`. Cardiff e Transformer não usam essa regra.
 
 ## Transformer (Nikolas)
 
@@ -246,4 +246,4 @@ done
 
 No baseline, no Transformer e no harness solto, `official_result` sai `false`. O arquivo descreve a corrida local e inclui a lista de predições. Essa lista fica em `runs/` e fora do git. A nota [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md) copia as métricas do baseline Cardiff de 2026-11-02, com semente, fração de teste, `per_class` 5000 e checkpoint. O flag dessa nota continua falso: a nota não é o registro do artigo. A revisão do dataset no Hub não entrou nesse resumo.
 
-No LLM, a decisão de 2026-11-03 aceita um arranjo como avaliação do braço. `official_result` sai `true` só na chamada real descrita na seção LLM. Dry-run e qualquer desvio ficam `false`, com `protocol_deviations`. O JSON continua fora do git.
+No LLM, a decisão de 2026-11-03, emendada em 2026-11-04, aceita um arranjo como avaliação do braço. `official_result` sai `true` só na chamada real descrita na seção LLM. Dry-run, a base da Groq e qualquer outro desvio ficam `false`, com `protocol_deviations`. O JSON continua fora do git.

@@ -1,7 +1,9 @@
 import http.client
 import io
 import json
+import os
 import ssl
+import subprocess
 import urllib.error
 from email.message import EmailMessage
 from pathlib import Path
@@ -16,6 +18,7 @@ from user_feedback_analysis.llm.client import (
     DEFAULT_BASE_URL,
     LLM_MAX_ATTEMPTS,
     LLM_USER_AGENT,
+    VoteResult,
     _RETRY_CAP_S,
     chat_complete,
     classify_text,
@@ -23,7 +26,10 @@ from user_feedback_analysis.llm.client import (
     resolve_dry_run,
 )
 from user_feedback_analysis.llm.protocol import (
+    OFFICIAL_RESULT_POLICY,
+    PROTOCOL_LLM_BASE_URL,
     PROTOCOL_LLM_MODEL_ID,
+    REVOKED_LLM_BASE_URL,
     llm_official_result,
     public_base_url,
 )
@@ -435,7 +441,12 @@ def test_llm_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypatch):
     assert payload["test_subsample"]["requested"] is None
     assert payload["test_subsample"]["official_test_size"] == payload["split"]["n_test"]
     assert payload["model_requirement"]["accepted_model_id"] == "openai/gpt-oss-20b"
+    assert payload["model_requirement"]["accepted_backend"] == "DeepInfra"
+    assert payload["model_requirement"]["accepted_base_url"] == "https://api.deepinfra.com/v1/openai"
+    assert payload["model_requirement"]["backend_decision"] == "2026-11-04"
     assert payload["model_requirement"]["revoked_status"] == "revoked"
+    assert payload["model_requirement"]["revoked_base_url"] == "https://api.groq.com/openai/v1"
+    assert payload["model_requirement"]["revoked_base_status"] == "revoked"
     assert payload["model_id"] == "should-not-be-called"
     assert any(item.startswith("dry_run") for item in payload["protocol_deviations"])
     assert all(len(votes) == 3 for votes in payload["inference_votes"])
@@ -594,7 +605,7 @@ def _closed_llm_call(**overrides: object) -> tuple[bool, list[str]]:
     kwargs: dict[str, object] = {
         "dry_run": False,
         "model_id": PROTOCOL_LLM_MODEL_ID,
-        "base_url": "https://api.groq.com/openai/v1/",
+        "base_url": "https://api.deepinfra.com/v1/openai/",
         "shot": "few",
         "few_shot_k": 3,
         "inferences": 3,
@@ -609,13 +620,23 @@ def _closed_llm_call(**overrides: object) -> tuple[bool, list[str]]:
     return llm_official_result(**kwargs)  # type: ignore[arg-type]
 
 
-def test_official_result_accepts_only_the_closed_groq_setup():
+def test_official_result_accepts_deepinfra_and_rejects_groq():
+    assert PROTOCOL_LLM_BASE_URL == "https://api.deepinfra.com/v1/openai"
+    assert REVOKED_LLM_BASE_URL == "https://api.groq.com/openai/v1"
+    assert "https://api.deepinfra.com/v1/openai" in OFFICIAL_RESULT_POLICY
+    assert "revogada" in OFFICIAL_RESULT_POLICY
+    assert REVOKED_LLM_BASE_URL in OFFICIAL_RESULT_POLICY
+
     official, deviations = _closed_llm_call()
     assert official is True
     assert deviations == []
     zero, zero_deviations = _closed_llm_call(shot="zero", few_shot_k=0, seed=0)
     assert zero is True
     assert zero_deviations == []
+    for seed in (0, 1, 2):
+        accepted, accepted_deviations = _closed_llm_call(seed=seed)
+        assert accepted is True
+        assert accepted_deviations == []
 
     official, deviations = _closed_llm_call(dry_run=True)
     assert official is False
@@ -624,6 +645,21 @@ def test_official_result_accepts_only_the_closed_groq_setup():
     official, deviations = _closed_llm_call(model_id="meta-llama/llama-3.1-8b-instruct")
     assert official is False
     assert any("revogado" in item for item in deviations)
+    assert not any(item.startswith("base_url") for item in deviations)
+
+    official, deviations = _closed_llm_call(base_url=REVOKED_LLM_BASE_URL)
+    assert official is False
+    assert any("revogada" in item and REVOKED_LLM_BASE_URL in item for item in deviations)
+    assert any(PROTOCOL_LLM_BASE_URL in item for item in deviations)
+
+    official, deviations = _closed_llm_call(base_url="https://openrouter.ai/api/v1")
+    assert official is False
+    assert any("openrouter.ai" in item for item in deviations)
+    assert any("não é" in item for item in deviations)
+
+    official, deviations = _closed_llm_call(base_url=None)
+    assert official is False
+    assert any("api.openai.com" in item for item in deviations)
 
     official, deviations = _closed_llm_call(test_subsample=None)
     assert official is False
@@ -638,11 +674,24 @@ def test_official_result_accepts_only_the_closed_groq_setup():
     assert any("5000" in item for item in deviations)
     assert any("sementes" in item for item in deviations)
 
-    leaked = "https://sk-super-secret@api.groq.com/openai/v1?api_key=sk-super-secret"
+    leaked = (
+        "https://sk-super-secret@api.deepinfra.com/v1/openai"
+        "?api_key=sk-super-secret"
+    )
     official, deviations = _closed_llm_call(base_url=leaked)
     assert official is True
+    assert deviations == []
     assert "sk-super-secret" not in " ".join(deviations)
-    assert public_base_url(leaked, fallback=DEFAULT_BASE_URL) == "https://api.groq.com/openai/v1"
+    assert public_base_url(leaked, fallback=DEFAULT_BASE_URL) == PROTOCOL_LLM_BASE_URL
+
+    groq_leaked = (
+        "https://sk-super-secret@api.groq.com/openai/v1?api_key=sk-super-secret"
+    )
+    official, deviations = _closed_llm_call(base_url=groq_leaked)
+    assert official is False
+    assert "sk-super-secret" not in " ".join(deviations)
+    assert public_base_url(groq_leaked, fallback=DEFAULT_BASE_URL) == REVOKED_LLM_BASE_URL
+    assert any("revogada" in item for item in deviations)
     assert public_base_url("not a url", fallback=DEFAULT_BASE_URL) == ""
 
 
@@ -681,7 +730,7 @@ def test_test_subsample_keeps_the_official_split(tiny_path: Path, tmp_path: Path
     monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret")
     monkeypatch.setenv(
         "OPENAI_BASE_URL",
-        "https://sk-super-secret@api.groq.com/openai/v1",
+        "https://sk-super-secret@api.deepinfra.com/v1/openai",
     )
     monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-20b")
 
@@ -726,7 +775,8 @@ def test_test_subsample_keeps_the_official_split(tiny_path: Path, tmp_path: Path
     assert sub_payload["live"] is False
     assert sub_payload["model"] == "mock"
     assert sub_payload["model_id"] == "openai/gpt-oss-20b"
-    assert sub_payload["base_url"] == "https://api.groq.com/openai/v1"
+    assert sub_payload["base_url"] == "https://api.deepinfra.com/v1/openai"
+    assert not any(item.startswith("base_url") for item in sub_payload["protocol_deviations"])
     assert "sk-super-secret" not in sub_path.read_text(encoding="utf-8")
     assert main([*shared, "--test-subsample", "0"]) == 1
     assert main([*shared, "--test-subsample", "99"]) == 1
@@ -751,3 +801,186 @@ def test_zero_shot_rejects_k(tiny_path: Path):
         ]
     )
     assert code == 1
+
+
+def _write_protocol_corpus(path: Path, per_class: int = 9000) -> None:
+    """Um turno de usuário por conversa, o bastante para 12%, 5000 e subamostra 1000."""
+    flags = (
+        ("SAT", True, False),
+        ("DSAT", False, True),
+        ("sem sinal", False, False),
+    )
+    lines: list[str] = []
+    for label, satisfaction, dissatisfaction in flags:
+        for index in range(per_class):
+            lines.append(
+                json.dumps(
+                    {
+                        "TurnId": 1,
+                        "UtterranceId": 0,
+                        "Role": "User",
+                        "Content": f"{label} {index}",
+                        "Satisfaction": satisfaction,
+                        "Disatisfaction": dissatisfaction,
+                        "State": "FEEDBACK",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _install_offline_votes(monkeypatch) -> None:
+    def _votes(*args, **kwargs):
+        return VoteResult(
+            label=Label.SAT,
+            votes=(Label.SAT, Label.SAT, Label.SAT),
+            decision="majority",
+        )
+
+    monkeypatch.setattr("user_feedback_analysis.llm.run.classify_votes", _votes)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("a corrida de teste chamou a rede")
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+
+
+def test_runner_marks_deepinfra_official_and_groq_revoked(
+    tmp_path: Path, monkeypatch
+):
+    corpus = tmp_path / "protocol.jsonl"
+    _write_protocol_corpus(corpus)
+    _install_offline_votes(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepinfra.com/v1/openai")
+    output = tmp_path / "few.json"
+    code = main(
+        [
+            "--data",
+            str(corpus),
+            "--shot",
+            "few",
+            "--k",
+            "3",
+            "--test-fraction",
+            "0.12",
+            "--test-subsample",
+            "1000",
+            "--per-class",
+            "5000",
+            "--strict-per-class",
+            "--inferences",
+            "3",
+            "--seed",
+            "2",
+            "--live",
+            "--output",
+            str(output),
+        ]
+    )
+    assert code == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["official_result"] is True
+    assert payload["protocol_deviations"] == []
+    assert payload["live"] is True
+    assert payload["dry_run"] is False
+    assert payload["model"] == "openai/gpt-oss-20b"
+    assert payload["model_id"] == "openai/gpt-oss-20b"
+    assert payload["base_url"] == "https://api.deepinfra.com/v1/openai"
+    assert payload["model_requirement"]["accepted_base_url"] == payload["base_url"]
+    assert payload["shot"] == "few"
+    assert payload["k"] == 3
+    assert payload["inference_k"] == 3
+    assert payload["split"]["seed"] == 2
+    assert payload["test_subsample"]["applied"] is True
+    assert payload["test_subsample"]["requested"] == 1000
+    assert payload["test_subsample"]["actual"] == 1000
+    assert len(payload["predictions"]) == 1000
+    assert "sk-super-secret" not in output.read_text(encoding="utf-8")
+
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.groq.com/openai/v1/")
+    groq_output = tmp_path / "groq.json"
+    groq_code = main(
+        [
+            "--data",
+            str(corpus),
+            "--shot",
+            "few",
+            "--k",
+            "3",
+            "--test-fraction",
+            "0.12",
+            "--test-subsample",
+            "1000",
+            "--per-class",
+            "5000",
+            "--strict-per-class",
+            "--inferences",
+            "3",
+            "--seed",
+            "0",
+            "--live",
+            "--output",
+            str(groq_output),
+        ]
+    )
+    assert groq_code == 0
+    groq_payload = json.loads(groq_output.read_text(encoding="utf-8"))
+    assert groq_payload["official_result"] is False
+    assert groq_payload["base_url"] == "https://api.groq.com/openai/v1"
+    assert any(
+        "revogada" in item and "https://api.groq.com/openai/v1" in item
+        for item in groq_payload["protocol_deviations"]
+    )
+    assert "sk-super-secret" not in groq_output.read_text(encoding="utf-8")
+
+
+def test_shell_guard_accepts_deepinfra_and_rejects_groq(tmp_path: Path):
+    repo = Path(__file__).resolve().parents[1]
+    script = repo / "scripts" / "run-llm-gptoss20b-sub1k.sh"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    log = tmp_path / "python-calls.txt"
+    python = fake_bin / "python"
+    python.write_text(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$FAKE_PYTHON_LOG\"\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    data = repo / "tests" / "fixtures" / "tiny_sat_dsat.jsonl"
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["FAKE_PYTHON_LOG"] = str(log)
+    env["OPENAI_API_KEY"] = "sk-not-a-real-key"
+    env["LLM_MODEL"] = "openai/gpt-oss-20b"
+    env["OPENAI_BASE_URL"] = "https://api.deepinfra.com/v1/openai/"
+    accepted = subprocess.run(
+        ["bash", str(script), str(data)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert len(calls) == 6
+    assert all(call.startswith("-m user_feedback_analysis.llm.run ") for call in calls)
+    assert "https://api.deepinfra.com/v1/openai" in accepted.stdout
+    assert "sk-not-a-real-key" not in accepted.stdout
+    assert "sk-not-a-real-key" not in accepted.stderr
+
+    env["OPENAI_BASE_URL"] = "https://api.groq.com/openai/v1"
+    rejected = subprocess.run(
+        ["bash", str(script), str(data)],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode == 1
+    assert "revogada" in rejected.stderr
+    assert "https://api.groq.com/openai/v1" in rejected.stderr
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 6
+    assert "sk-not-a-real-key" not in rejected.stderr

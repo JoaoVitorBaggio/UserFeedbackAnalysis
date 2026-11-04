@@ -62,7 +62,8 @@ def build_run_record(
 
     ``official_result`` sai falso. O arquivo não é o registro do artigo.
     O runner de LLM pode sobrescrever o campo quando a chamada casa com
-    a decisão de 2026-11-03. Cardiff e Transformer não fazem isso.
+    a decisão de 2026-11-03, emendada em 2026-11-04 (backend DeepInfra).
+    Cardiff e Transformer não fazem isso.
     """
     payload: dict[str, object] = {
         "arm": arm,

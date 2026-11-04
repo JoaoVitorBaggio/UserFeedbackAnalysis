@@ -1,9 +1,18 @@
-"""Decisão de LLM fechada por João em 2026-11-03 (America/Sao_Paulo).
+"""Decisão de LLM fechada por João.
 
-A call de 31/10/2026 tinha fechado Llama 3.1 8B Instruct. Essa exigência
-foi revogada: a conta Groq do João não lista mais esse modelo. As
-corridas de LLM deste protocolo usam ``openai/gpt-oss-20b`` na Groq e
-avaliam 1000 turnos estratificados do teste oficial de 12%.
+Em 2026-11-03 (America/Sao_Paulo) o modelo destas corridas passou a ser
+``openai/gpt-oss-20b``, com 1000 turnos estratificados do teste oficial
+de 12% e few-shot k=3. A call de 31/10/2026 tinha fechado Llama 3.1 8B
+Instruct. Essa exigência foi revogada: a conta Groq do João não lista
+mais esse modelo.
+
+Em 2026-11-04 (America/Sao_Paulo) João trocou o backend. A cota gratuita
+diária da Groq (TPD) tinha esgotado, e a rota que mandaria o mesmo modelo
+pela OpenRouter até a Groq foi abandonada: o valor mínimo de recarga
+pareceu caro. Os créditos pré-pagos da DeepInfra estão cobertos. A base
+aceita é a API de chat compatível com a OpenAI da DeepInfra. A base da
+Groq foi revogada para estas corridas, do mesmo modo que Llama tinha
+sido revogado. O id do modelo e os demais botões não mudam.
 
 ``official_result`` sai verdadeiro só quando a chamada real casa com
 esse arranjo. Dry-run e qualquer desvio ficam falsos, com a lista
@@ -18,9 +27,13 @@ from urllib.parse import urlsplit, urlunsplit
 from user_feedback_analysis.data.split import PROTOCOL_TEST_FRACTION
 
 PROTOCOL_LLM_DECISION = "2026-11-03"
+PROTOCOL_LLM_BACKEND_DECISION = "2026-11-04"
 PROTOCOL_LLM_TIMEZONE = "America/Sao_Paulo"
 PROTOCOL_LLM_MODEL_ID = "openai/gpt-oss-20b"
-PROTOCOL_LLM_BASE_URL = "https://api.groq.com/openai/v1"
+# Consulta em 2026-11-04 à doc de chat da DeepInfra: base OpenAI-compatible,
+# POST {base}/chat/completions, modelo openai/gpt-oss-20b.
+PROTOCOL_LLM_BASE_URL = "https://api.deepinfra.com/v1/openai"
+REVOKED_LLM_BASE_URL = "https://api.groq.com/openai/v1"
 PROTOCOL_LLM_TEST_SUBSAMPLE = 1000
 PROTOCOL_FEW_SHOT_K = 3
 PROTOCOL_LLM_SEEDS = (0, 1, 2)
@@ -29,15 +42,19 @@ PROTOCOL_INFERENCE_K = 3
 REVOKED_LLM_REQUIREMENT = "Llama 3.1 8B Instruct"
 
 OFFICIAL_RESULT_POLICY = (
-    "Decisão de 2026-11-03 (America/Sao_Paulo): official_result é true só na "
-    "chamada real com LLM_MODEL=openai/gpt-oss-20b, "
-    "OPENAI_BASE_URL=https://api.groq.com/openai/v1, teste oficial em fração 0.12, "
+    f"Decisão de {PROTOCOL_LLM_DECISION} ({PROTOCOL_LLM_TIMEZONE}), "
+    f"emendada em {PROTOCOL_LLM_BACKEND_DECISION}: official_result é true só na "
+    f"chamada real com LLM_MODEL={PROTOCOL_LLM_MODEL_ID}, "
+    f"OPENAI_BASE_URL={PROTOCOL_LLM_BASE_URL}, teste oficial em fração 0.12, "
     "--test-subsample 1000, --per-class 5000 --strict-per-class, "
     "--inferences 3, few-shot com k=3, semente 0, 1 ou 2. "
     "true quer dizer que a chamada casa com esse protocolo de LLM. "
     "O JSON continua local, fora do git, e não é sozinho o registro do artigo. "
     "Dry-run e qualquer desvio ficam false, com protocol_deviations. "
-    "Isto revoga Llama 3.1 8B Instruct. "
+    f"Isto revoga {REVOKED_LLM_REQUIREMENT}. "
+    f"A base {REVOKED_LLM_BASE_URL} foi revogada em {PROTOCOL_LLM_BACKEND_DECISION}: "
+    "a cota gratuita diária da Groq (TPD) esgotou, e a rota OpenRouter para a Groq "
+    "foi abandonada. O backend aceito é a DeepInfra. "
     "Cardiff e Transformer não usam esta regra e seguem com false."
 )
 
@@ -45,11 +62,15 @@ OFFICIAL_RESULT_POLICY = (
 def model_requirement_record() -> dict[str, str]:
     return {
         "decision": PROTOCOL_LLM_DECISION,
+        "backend_decision": PROTOCOL_LLM_BACKEND_DECISION,
         "timezone": PROTOCOL_LLM_TIMEZONE,
         "accepted_model_id": PROTOCOL_LLM_MODEL_ID,
+        "accepted_backend": "DeepInfra",
         "accepted_base_url": PROTOCOL_LLM_BASE_URL,
         "revoked_model": REVOKED_LLM_REQUIREMENT,
         "revoked_status": "revoked",
+        "revoked_base_url": REVOKED_LLM_BASE_URL,
+        "revoked_base_status": "revoked",
     }
 
 
@@ -84,7 +105,10 @@ def llm_official_result(
     seed: int,
     fallback_base_url: str,
 ) -> tuple[bool, list[str]]:
-    """True só no arranjo fechado em 2026-11-03. A lista explica o false."""
+    """True só no arranjo de 2026-11-03 com a base de 2026-11-04.
+
+    A lista explica o false. A base da Groq entra como revogada.
+    """
     deviations: list[str] = []
     if dry_run:
         deviations.append("dry_run: a chamada não foi à rede.")
@@ -99,9 +123,15 @@ def llm_official_result(
     got_base = public_base_url(base_url, fallback=fallback_base_url)
     if got_base != PROTOCOL_LLM_BASE_URL:
         shown_base = got_base if got_base else "(vazia ou inválida)"
-        deviations.append(
-            f"base_url {shown_base} não é {PROTOCOL_LLM_BASE_URL}."
-        )
+        if got_base == REVOKED_LLM_BASE_URL:
+            deviations.append(
+                f"base_url {shown_base} foi revogada em {PROTOCOL_LLM_BACKEND_DECISION}. "
+                f"A base aceita é {PROTOCOL_LLM_BASE_URL}."
+            )
+        else:
+            deviations.append(
+                f"base_url {shown_base} não é {PROTOCOL_LLM_BASE_URL}."
+            )
     if test_subsample != PROTOCOL_LLM_TEST_SUBSAMPLE:
         deviations.append(
             f"test_subsample {test_subsample!r} não é {PROTOCOL_LLM_TEST_SUBSAMPLE}. "

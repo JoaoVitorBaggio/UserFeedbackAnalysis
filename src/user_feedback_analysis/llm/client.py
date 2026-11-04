@@ -2,18 +2,21 @@
 
 Variáveis de ambiente, sem chave no código:
 
-- ``OPENAI_API_KEY``: obrigatória na chamada real.
+- ``OPENAI_API_KEY``: obrigatória na chamada real. Na corrida fechada
+  é a chave da DeepInfra. Não entra no repositório.
 - ``LLM_MODEL``: obrigatória na chamada real. A decisão de 2026-11-03
-  fecha ``openai/gpt-oss-20b`` na Groq. Llama 3.1 8B Instruct foi revogado.
+  fecha ``openai/gpt-oss-20b``. Llama 3.1 8B Instruct foi revogado.
 - ``OPENAI_BASE_URL``: opcional no cliente. Padrão
-  ``https://api.openai.com/v1``. A corrida fechada usa
-  ``https://api.groq.com/openai/v1``.
+  ``https://api.openai.com/v1``. Desde 2026-11-04 a corrida fechada usa
+  ``https://api.deepinfra.com/v1/openai``. A base da Groq
+  ``https://api.groq.com/openai/v1`` foi revogada para estas corridas.
 
 A call de 31/10/2026 tinha apontado Llama 3.1 8B Instruct, via Groq ou
 OpenRouter (``meta-llama/llama-3.1-8b-instruct``). A conta Groq do João
 não lista mais esse modelo. O id histórico ``llama-3.1-8b-instant`` já
 constava como desligado em 16/08/2026 fora de contrato enterprise. Essa
-rota não é a corrida de 2026-11-03.
+rota não é a corrida de 2026-11-03. Em 2026-11-04 a própria base da Groq
+saiu do protocolo: a cota gratuita diária tinha esgotado.
 
 Sem chave, a corrida cai no dry-run e não chama a rede. Cada exemplo pede
 K inferências (padrão 3) e devolve a moda. A temperatura padrão do cliente
@@ -21,8 +24,9 @@ K inferências (padrão 3) e devolve a moda. A temperatura padrão do cliente
 exigência do protocolo. O valor vai no corpo da chamada e no JSON.
 
 A chamada real manda ``User-Agent`` estável. O padrão do urllib
-(``Python-urllib/…``) recebe HTTP 403 da Cloudflare na frente da Groq,
-com corpo ``error code: 1010``. HTTP 429, HTTP 5xx e falha transitória
+(``Python-urllib/…``) recebia HTTP 403 da Cloudflare na frente da Groq,
+com corpo ``error code: 1010``. O cabeçalho continua em toda chamada,
+inclusive na DeepInfra. HTTP 429, HTTP 5xx e falha transitória
 de rede repetem no máximo ``LLM_MAX_ATTEMPTS`` vezes. A espera segue
 ``try again in Xs`` (ou ``ms``) e o header ``Retry-After`` quando vêm
 no erro; sem pista, dobra a partir de 1s. Piso e teto cortam a espera,
@@ -48,8 +52,10 @@ from user_feedback_analysis.labels import Label
 from user_feedback_analysis.llm.mock import mock_label
 from user_feedback_analysis.llm.parse import parse_label
 from user_feedback_analysis.llm.protocol import (
+    PROTOCOL_LLM_BACKEND_DECISION,
     PROTOCOL_LLM_BASE_URL,
     PROTOCOL_LLM_MODEL_ID,
+    REVOKED_LLM_BASE_URL,
     REVOKED_LLM_REQUIREMENT,
 )
 from user_feedback_analysis.llm.vote import majority_vote
@@ -59,15 +65,18 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DOCUMENTED_LLM_NAME = PROTOCOL_LLM_MODEL_ID
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_LLAMA_31_8B = "meta-llama/llama-3.1-8b-instruct"
-GROQ_BASE_URL = PROTOCOL_LLM_BASE_URL
+# Base da Groq, revogada para estas corridas em 2026-11-04.
+# Não é a base que official_result aceita.
+GROQ_BASE_URL = REVOKED_LLM_BASE_URL
 DEFAULT_INFERENCE_K = 3
 # Padrão do cliente, não hiperparâmetro medido e não número do protocolo.
 # Com temperatura 0 um endpoint determinístico devolve três rótulos iguais
 # e o voto majoritário não separa nada. 0.7 deixa as K amostras poderem divergir.
 DEFAULT_TEMPERATURE = 0.7
-# Cloudflare 1010 bloqueia o User-Agent do urllib. Este passa da borda e
-# ainda identifica o cliente. Conferido contra api.groq.com: o padrão toma
-# 403 "error code: 1010"; este chega no 401 da API.
+# Cloudflare 1010 bloqueava o User-Agent do urllib na Groq. Este passa
+# daquela borda e ainda identifica o cliente. Conferido contra api.groq.com
+# quando a Groq era o backend: o padrão tomava 403 "error code: 1010";
+# este chegava no 401 da API. O cabeçalho permanece na chamada à DeepInfra.
 LLM_USER_AGENT = "Mozilla/5.0 (compatible; UserFeedbackAnalysis/llm-client)"
 # Uma tentativa inicial mais as repetições. Finito de propósito.
 LLM_MAX_ATTEMPTS = 8
@@ -93,10 +102,13 @@ _TRANSIENT_REASON_MARKERS = (
 
 _MISSING_MODEL = (
     "LLM_MODEL ausente. A decisão de 2026-11-03 usa "
-    f"LLM_MODEL={PROTOCOL_LLM_MODEL_ID} e "
+    f"LLM_MODEL={PROTOCOL_LLM_MODEL_ID}. "
+    f"Desde {PROTOCOL_LLM_BACKEND_DECISION} a base aceita é "
     f"OPENAI_BASE_URL={PROTOCOL_LLM_BASE_URL}. "
     f"{REVOKED_LLM_REQUIREMENT} foi revogado: a conta Groq do João não lista "
-    "mais esse modelo. A rota antiga de OpenRouter, também revogada, era "
+    "mais esse modelo. A base da Groq "
+    f"({GROQ_BASE_URL}) também foi revogada em {PROTOCOL_LLM_BACKEND_DECISION}. "
+    "A rota antiga de OpenRouter para o Llama, também revogada, era "
     f"LLM_MODEL={OPENROUTER_LLAMA_31_8B} e "
     f"OPENAI_BASE_URL={OPENROUTER_BASE_URL}. "
     "Passe o id pela variável LLM_MODEL. Não há chave no código."

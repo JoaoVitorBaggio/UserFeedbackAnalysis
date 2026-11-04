@@ -66,7 +66,7 @@ O card declara o corpus em inglês. O caminho mínimo não traduz.
 | Sementes | 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas |
 | Baseline principal | `cardiffnlp/twitter-roberta-base-sentiment-latest`. Mapa: positive → SAT, negative → DSAT, neutral → sem sinal. O descompasso Twitter versus feedback de assistente é intencional e faz parte da pergunta |
 | Baseline alternativo | `j-hartmann/sentiment-roberta-large-english-3-classes` (três classes no card: negative, neutral, positive). Mesmo mapa. Não é a corrida principal |
-| LLM | `openai/gpt-oss-20b` na Groq (`OPENAI_BASE_URL=https://api.groq.com/openai/v1`). Decisão de 2026-11-03 (America/Sao_Paulo). Revoga Llama 3.1 8B Instruct: a conta Groq do João não lista mais esse modelo |
+| LLM | `openai/gpt-oss-20b` na DeepInfra (`OPENAI_BASE_URL=https://api.deepinfra.com/v1/openai`). Modelo fechado em 2026-11-03 (America/Sao_Paulo). Backend emendado em 2026-11-04: João trocou a Groq pela DeepInfra depois que a cota gratuita diária (TPD) esgotou. A base `https://api.groq.com/openai/v1` foi revogada para estas corridas. Revoga também Llama 3.1 8B Instruct: a conta Groq do João não lista mais esse modelo |
 | Avaliação do LLM | Subamostra estratificada de 1000 turnos do teste oficial de 12%. Cardiff e Transformer ficam no teste completo |
 | Few-shot | k=3 demonstrações do treino, fechado em 2026-11-03. Antes estava em aberto. Não é o K=3 das inferências |
 | Agregação do LLM | K=3 inferências por exemplo; voto majoritário (moda). Temperatura 0 não é exigida. Sem moda única, o código usa a primeira inferência empatada (`first_inference`) |
@@ -77,7 +77,7 @@ O card declara o corpus em inglês. O caminho mínimo não traduz.
 | Primeiro F1 | 4/11/2026, meta interna do grupo |
 | Slides | 24/11/2026 |
 
-Call e chat de 31/10/2026 (João Vítor Baggio) fecharam teste, sementes, baseline, LLM, agregação, encoder e GPU. Em 2026-11-03 João revogou o modelo Llama 3.1 8B Instruct, fechou `openai/gpt-oss-20b` na Groq, a subamostra de 1000 turnos para os braços LLM e o k=3 do few-shot. O macro F1 do baseline Cardiff (2026-11-02) está na [nota](cardiff-baseline-2026-11-02.md). Transformer e LLM ainda não têm número.
+Call e chat de 31/10/2026 (João Vítor Baggio) fecharam teste, sementes, baseline, LLM, agregação, encoder e GPU. Em 2026-11-03 João revogou o modelo Llama 3.1 8B Instruct, fechou `openai/gpt-oss-20b`, a subamostra de 1000 turnos para os braços LLM e o k=3 do few-shot. Em 2026-11-04 João trocou o backend dessas corridas para a DeepInfra e revogou a base da Groq: a cota gratuita diária tinha esgotado, a rota OpenRouter para a Groq foi abandonada, e os créditos pré-pagos da DeepInfra estão cobertos. O id do modelo e os demais botões não mudam. O macro F1 do baseline Cardiff (2026-11-02) está na [nota](cardiff-baseline-2026-11-02.md). Transformer e LLM ainda não têm número.
 
 ## Fora de escopo
 
