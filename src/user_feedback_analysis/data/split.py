@@ -23,6 +23,11 @@ Estratificação (só quando ``test_fraction`` vem preenchido):
   conversas entram até o número de exemplos *daquela classe* no teste atingir
   o alvo. A última conversa pode ultrapassar o alvo. Turnos de outra classe
   que viajam com a conversa contam para o alvo delas.
+
+A subamostra do teste, usada pelos braços LLM, não entra aqui.
+``make_splits`` devolve o teste oficial inteiro. O recorte é
+``user_feedback_analysis.data.subsample``, chamado depois, e não
+altera treino nem este manifesto.
 """
 
 from __future__ import annotations

@@ -1,6 +1,9 @@
 """Exemplos de few-shot saem só do treino.
 
-O protocolo: nenhum braço vê o teste no few-shot. ``k`` está a definir.
+O protocolo: nenhum braço vê o teste no few-shot. O número de
+demonstrações foi fechado em 3 em 2026-11-03; antes estava em aberto.
+A CLI usa esse padrão quando ``--k`` não vem. Esta função ainda exige
+o inteiro explícito. Esse ``k`` não é o K=3 das inferências.
 """
 
 from __future__ import annotations

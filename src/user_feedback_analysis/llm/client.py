@@ -1,21 +1,19 @@
 """Cliente compatível com a API de chat da OpenAI.
 
-Variáveis de ambiente:
+Variáveis de ambiente, sem chave no código:
 
-- ``OPENAI_API_KEY``: obrigatória na chamada real. Não fica no código.
-- ``LLM_MODEL``: obrigatória na chamada real. O protocolo fecha Llama 3.1 8B
-  Instruct. O id da API vai nesta variável.
-- ``OPENAI_BASE_URL``: opcional. Padrão ``https://api.openai.com/v1``.
-  Serve Groq, OpenRouter ou um endpoint local compatível.
+- ``OPENAI_API_KEY``: obrigatória na chamada real.
+- ``LLM_MODEL``: obrigatória na chamada real. A decisão de 2026-11-03
+  fecha ``openai/gpt-oss-20b`` na Groq. Llama 3.1 8B Instruct foi revogado.
+- ``OPENAI_BASE_URL``: opcional no cliente. Padrão
+  ``https://api.openai.com/v1``. A corrida fechada usa
+  ``https://api.groq.com/openai/v1``.
 
-Rotas documentadas para o modelo do protocolo (consulta em 31/10/2026):
-
-- OpenRouter: ``OPENAI_BASE_URL=https://openrouter.ai/api/v1`` e
-  ``LLM_MODEL=meta-llama/llama-3.1-8b-instruct``.
-- Groq: ``OPENAI_BASE_URL=https://api.groq.com/openai/v1``. O id histórico
-  ``llama-3.1-8b-instant`` consta como desligado em 16/08/2026 na página de
-  depreciação da Groq, fora de contrato enterprise. O id que o provedor
-  servir para Llama 3.1 8B Instruct entra em ``LLM_MODEL``.
+A call de 31/10/2026 tinha apontado Llama 3.1 8B Instruct, via Groq ou
+OpenRouter (``meta-llama/llama-3.1-8b-instruct``). A conta Groq do João
+não lista mais esse modelo. O id histórico ``llama-3.1-8b-instant`` já
+constava como desligado em 16/08/2026 fora de contrato enterprise. Essa
+rota não é a corrida de 2026-11-03.
 
 Sem chave, a corrida cai no dry-run e não chama a rede. Cada exemplo pede
 K inferências (padrão 3) e devolve a moda. A temperatura padrão do cliente
@@ -35,14 +33,19 @@ from dataclasses import dataclass
 from user_feedback_analysis.labels import Label
 from user_feedback_analysis.llm.mock import mock_label
 from user_feedback_analysis.llm.parse import parse_label
+from user_feedback_analysis.llm.protocol import (
+    PROTOCOL_LLM_BASE_URL,
+    PROTOCOL_LLM_MODEL_ID,
+    REVOKED_LLM_REQUIREMENT,
+)
 from user_feedback_analysis.llm.vote import majority_vote
 from user_feedback_analysis.records import Example
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DOCUMENTED_LLM_NAME = "Llama 3.1 8B Instruct"
+DOCUMENTED_LLM_NAME = PROTOCOL_LLM_MODEL_ID
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_LLAMA_31_8B = "meta-llama/llama-3.1-8b-instruct"
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+GROQ_BASE_URL = PROTOCOL_LLM_BASE_URL
 DEFAULT_INFERENCE_K = 3
 # Padrão do cliente, não hiperparâmetro medido e não número do protocolo.
 # Com temperatura 0 um endpoint determinístico devolve três rótulos iguais
@@ -50,11 +53,14 @@ DEFAULT_INFERENCE_K = 3
 DEFAULT_TEMPERATURE = 0.7
 
 _MISSING_MODEL = (
-    "LLM_MODEL ausente. O protocolo usa Llama 3.1 8B Instruct. "
-    f"OpenRouter: LLM_MODEL={OPENROUTER_LLAMA_31_8B} e "
+    "LLM_MODEL ausente. A decisão de 2026-11-03 usa "
+    f"LLM_MODEL={PROTOCOL_LLM_MODEL_ID} e "
+    f"OPENAI_BASE_URL={PROTOCOL_LLM_BASE_URL}. "
+    f"{REVOKED_LLM_REQUIREMENT} foi revogado: a conta Groq do João não lista "
+    "mais esse modelo. A rota antiga de OpenRouter, também revogada, era "
+    f"LLM_MODEL={OPENROUTER_LLAMA_31_8B} e "
     f"OPENAI_BASE_URL={OPENROUTER_BASE_URL}. "
-    f"Groq: OPENAI_BASE_URL={GROQ_BASE_URL} e o id que o provedor servir "
-    "para esse modelo. Passe o id pela variável LLM_MODEL. Não há chave no código."
+    "Passe o id pela variável LLM_MODEL. Não há chave no código."
 )
 
 
