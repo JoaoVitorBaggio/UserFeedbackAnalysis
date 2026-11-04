@@ -13,6 +13,13 @@ no prompt. O padrão fechado é 3; antes estava em aberto.
 depois do split. Sem a flag, o teste oficial inteiro é avaliado. A
 flag não muda o treino.
 
+Com ``--output``, cada exemplo concluído substitui esse arquivo por
+um checkpoint (replace atômico). A mesma invocação, no mesmo caminho,
+continua do ``next_index`` e não refaz o voto já gravado. Sem
+``--output`` não há o que retomar. O checkpoint não é o JSON final:
+``official_result`` nele fica falso. A regra do resultado oficial não
+olha para a retomada.
+
     python -m user_feedback_analysis.llm.run \\
         --data tests/fixtures/tiny_sat_dsat.jsonl \\
         --shot zero --test-size 3 --per-class 1 --seed 0 --dry-run
@@ -47,6 +54,11 @@ from user_feedback_analysis.harness import (
     format_report,
     prediction_rows,
     write_json,
+)
+from user_feedback_analysis.llm.checkpoint import (
+    build_fingerprint,
+    load_resume,
+    write_checkpoint,
 )
 from user_feedback_analysis.llm.client import (
     DEFAULT_BASE_URL,
@@ -156,7 +168,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "aviso: official_result false. Os desvios estão em protocol_deviations."
         )
     if args.output is not None:
-        write_json(payload, args.output)
+        try:
+            write_json(payload, args.output)
+        except OSError as exc:
+            print(f"erro: {exc}", file=sys.stderr)
+            print(
+                f"checkpoint preservado em {args.output}. Rode de novo para concluir.",
+                file=sys.stderr,
+            )
+            return 1
         print(f"relatório: {args.output}")
     return 0
 
@@ -228,8 +248,42 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
         fallback_base_url=DEFAULT_BASE_URL,
     )
 
-    voted = [
-        classify_votes(
+    fingerprint = build_fingerprint(
+        shot=args.shot,
+        seed=config.seed,
+        few_shot_seed=few_seed if args.shot == "few" else None,
+        few_shot_k=few_shot_k,
+        inferences=args.inferences,
+        temperature=float(args.temperature),
+        max_chars=max_chars,
+        dry_run=dry_run,
+        model_id=model_id,
+        base_url=base_url,
+        test_subsample=args.test_subsample,
+        test_fraction=config.test_fraction,
+        test_size=config.test_size,
+        per_class=config.per_class,
+        strict_per_class=config.strict_per_class,
+        split_unit=config.split_unit,
+        role=config.role,
+        val_size=config.val_size,
+        demonstrations=demonstrations,
+        evaluated=evaluated,
+    )
+    resumed = (
+        load_resume(args.output, fingerprint, evaluated)
+        if args.output is not None
+        else ()
+    )
+    n_reused = len(resumed)
+    if n_reused:
+        print(
+            f"retomada: {n_reused} de {len(evaluated)} exemplos em {args.output}",
+            flush=True,
+        )
+    voted = list(resumed)
+    for example in evaluated[n_reused:]:
+        result = classify_votes(
             example.text,
             demonstrations,
             dry_run=dry_run,
@@ -239,8 +293,13 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
             k=args.inferences,
             temperature=float(args.temperature),
         )
-        for example in evaluated
-    ]
+        voted.append(result)
+        if args.output is not None:
+            write_checkpoint(args.output, fingerprint, evaluated, voted)
+        print(
+            f"exemplo {len(voted)}/{len(evaluated)} {example.example_id}",
+            flush=True,
+        )
     predictions = [result.label for result in voted]
     gold = [example.label for example in evaluated]
     report = evaluate(gold, predictions)
@@ -262,6 +321,11 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
         note = (
             "Chamada fora do protocolo de LLM emendado em 2026-11-04. "
             "official_result false. Os desvios estão em protocol_deviations."
+        )
+    if n_reused:
+        note += (
+            f" Retomada: {n_reused} exemplos já estavam no --output "
+            "e não foram inferidos de novo."
         )
     if subsample_result is None:
         test_subsample = absent_subsample_record(
@@ -305,6 +369,8 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
                 [label.value for label in result.votes] for result in voted
             ],
             "test_subsample": test_subsample,
+            "run_fingerprint": fingerprint,
+            "resume": {"n_reused": n_reused},
             "note": note,
         },
     )

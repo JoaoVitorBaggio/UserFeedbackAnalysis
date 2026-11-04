@@ -26,12 +26,23 @@ exigência do protocolo. O valor vai no corpo da chamada e no JSON.
 A chamada real manda ``User-Agent`` estável. O padrão do urllib
 (``Python-urllib/…``) recebia HTTP 403 da Cloudflare na frente da Groq,
 com corpo ``error code: 1010``. O cabeçalho continua em toda chamada,
-inclusive na DeepInfra. HTTP 429, HTTP 5xx e falha transitória
-de rede repetem no máximo ``LLM_MAX_ATTEMPTS`` vezes. A espera segue
-``try again in Xs`` (ou ``ms``) e o header ``Retry-After`` quando vêm
-no erro; sem pista, dobra a partir de 1s. Piso e teto cortam a espera,
-então a corrida não fica presa numa repetição infinita nem numa pista
-de horas.
+inclusive na DeepInfra. HTTP 429, HTTP 5xx, falha transitória de
+rede e resposta sem rótulo único repetem no máximo ``LLM_MAX_ATTEMPTS``
+vezes, na mesma fila. A espera de 429 segue ``try again in Xs`` (ou
+``ms``) e o header ``Retry-After`` quando vêm no erro; sem pista, e
+também na recusa ou no ``content`` vazio, dobra a partir de 1s. Piso
+e teto cortam a espera, então a corrida não fica presa numa repetição
+infinita nem numa pista de horas.
+
+O gpt-oss na DeepInfra às vezes devolve a cadeia de pensamento em
+``reasoning_content`` e o rótulo em ``content``. O cliente lê só
+``content``. Se ``content`` vem vazio, nulo ou ausente, a chamada
+repete; o outro campo não vira rótulo. Recusa (texto sem um SAT, DSAT
+ou sem sinal único) também repete, no mesmo prompt e na mesma
+temperatura. ``parse_label`` segue estrito e não inventa rótulo.
+Esgotadas as tentativas, o ``ValueError`` traz o texto recusado e a
+contagem. Uma recusa estável ainda derruba o exemplo, só que depois
+do teto, não na primeira resposta.
 """
 
 from __future__ import annotations
@@ -229,6 +240,36 @@ def _give_up(message: str, *, exhausted: bool, attempts: int) -> str:
     return message
 
 
+def _completion_content(payload: object) -> str | None:
+    """Texto de ``choices[0].message.content``.
+
+    ``None`` quando o campo falta, vem nulo ou só tem branco. Isso é
+    repetível: o gpt-oss na DeepInfra às vezes deixa ``content`` vazio
+    e põe a cadeia em ``reasoning_content``. Esse outro campo não é
+    lido. Recusa com texto segue adiante e quem recusa é o
+    ``parse_label``.
+
+    JSON sem ``choices`` ou ``content`` que não é texto continua erro
+    imediato: repetir não conserta forma quebrada.
+    """
+    if not isinstance(payload, dict):
+        raise RuntimeError("Resposta do LLM sem choices[0].message.content.")
+    try:
+        message = payload["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError("Resposta do LLM sem choices[0].message.content.") from exc
+    if not isinstance(message, dict):
+        raise RuntimeError("Resposta do LLM sem choices[0].message.content.")
+    if "content" not in message or message["content"] is None:
+        return None
+    content = message["content"]
+    if not isinstance(content, str):
+        raise RuntimeError("O conteúdo da resposta do LLM não é texto.")
+    if not content.strip():
+        return None
+    return content
+
+
 def chat_complete(
     prompt: str,
     *,
@@ -254,7 +295,6 @@ def chat_complete(
         }
     ).encode("utf-8")
     url = f"{base}/chat/completions"
-    raw: bytes | None = None
     for attempt in range(LLM_MAX_ATTEMPTS):
         request = urllib.request.Request(
             url,
@@ -269,7 +309,6 @@ def chat_complete(
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 raw = response.read()
-            break
         except urllib.error.HTTPError as exc:
             detail = _error_body(exc)
             exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
@@ -282,6 +321,7 @@ def chat_complete(
                     )
                 ) from exc
             time.sleep(_retry_delay_s(attempt, detail, exc.headers))
+            continue
         except urllib.error.URLError as exc:
             exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
             transient = _transient_urlerror(exc)
@@ -294,6 +334,7 @@ def chat_complete(
                     )
                 ) from exc
             time.sleep(_retry_delay_s(attempt, "", None))
+            continue
         except (TimeoutError, ConnectionError, http.client.IncompleteRead) as exc:
             exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
             if exhausted:
@@ -305,16 +346,32 @@ def chat_complete(
                     )
                 ) from exc
             time.sleep(_retry_delay_s(attempt, "", None))
-    if raw is None:
-        raise RuntimeError("Falha ao chamar o LLM.")
-    try:
-        payload = json.loads(raw.decode("utf-8"))
-        content = payload["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("Resposta do LLM sem choices[0].message.content.") from exc
-    if not isinstance(content, str):
-        raise RuntimeError("O conteúdo da resposta do LLM não é texto.")
-    return content
+            continue
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            content = _completion_content(payload)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "Resposta do LLM sem choices[0].message.content."
+            ) from exc
+        if content is not None:
+            try:
+                parse_label(content)
+            except ValueError as exc:
+                problem = str(exc)
+            else:
+                return content
+        else:
+            problem = "Resposta do LLM com content vazio."
+        # Mesma fila de LLM_MAX_ATTEMPTS. O índice da tentativa já conta
+        # 429 e rede, então uma recusa no meio não recomeça do 1s.
+        exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
+        if exhausted:
+            raise ValueError(
+                _give_up(problem, exhausted=True, attempts=attempt + 1)
+            )
+        time.sleep(_retry_delay_s(attempt, "", None))
+    raise RuntimeError("Falha ao chamar o LLM.")
 
 
 @dataclass(frozen=True)
@@ -339,6 +396,9 @@ def classify_votes(
     """K inferências do mesmo prompt. A resposta é a moda dos rótulos parseados.
 
     Dry-run repete o mock local K vezes e não chama ``complete`` nem a rede.
+    Na chamada real, ``chat_complete`` repete recusa e ``content`` vazio
+    na mesma fila das falhas de rede. ``complete`` injetado não ganha
+    essa fila: quem substitui o cliente trata a resposta que devolve.
     """
     if isinstance(k, bool) or not isinstance(k, int) or k < 1:
         raise ValueError("K é um inteiro >= 1. O protocolo usa K=3.")
