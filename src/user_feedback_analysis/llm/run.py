@@ -1,8 +1,10 @@
 """Corridas de LLM zero-shot e few-shot. A métrica sai do harness compartilhado.
 
 Sem ``OPENAI_API_KEY`` a corrida entra em dry-run e não chama a rede.
-A chamada real exige ``LLM_MODEL``. A decisão de 2026-11-03 fecha
-``openai/gpt-oss-20b`` na Groq; Llama 3.1 8B Instruct foi revogado.
+A chamada real exige ``LLM_MODEL``. O id fechado em 2026-11-03 é
+``openai/gpt-oss-20b``. Desde 2026-11-04 a base aceita é a DeepInfra
+(``https://api.deepinfra.com/v1/openai``); a base da Groq foi revogada.
+Llama 3.1 8B Instruct já tinha sido revogado.
 Cada exemplo avaliado recebe K inferências (padrão 3); o rótulo é a
 moda. ``--k`` do few-shot é outra coisa: quantas demonstrações entram
 no prompt. O padrão fechado é 3; antes estava em aberto.
@@ -56,6 +58,8 @@ from user_feedback_analysis.llm.client import (
 from user_feedback_analysis.llm.protocol import (
     OFFICIAL_RESULT_POLICY,
     PROTOCOL_FEW_SHOT_K,
+    PROTOCOL_LLM_BASE_URL,
+    PROTOCOL_LLM_MODEL_ID,
     llm_official_result,
     model_requirement_record,
     public_base_url,
@@ -125,9 +129,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--live",
         action="store_true",
         help=(
-            "Exige OPENAI_API_KEY e LLM_MODEL. Na Groq, "
-            "OPENAI_BASE_URL=https://api.groq.com/openai/v1 e "
-            "LLM_MODEL=openai/gpt-oss-20b. A chave não entra no código."
+            "Exige OPENAI_API_KEY e LLM_MODEL. Na DeepInfra, "
+            f"OPENAI_BASE_URL={PROTOCOL_LLM_BASE_URL} e "
+            f"LLM_MODEL={PROTOCOL_LLM_MODEL_ID}. A chave não entra no código."
         ),
     )
     parser.add_argument(
@@ -249,14 +253,14 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
         )
     elif official:
         note = (
-            "Chamada real no protocolo de LLM de 2026-11-03 "
-            "(openai/gpt-oss-20b na Groq, subamostra estratificada de 1000). "
+            "Chamada real no protocolo de LLM emendado em 2026-11-04 "
+            "(openai/gpt-oss-20b na DeepInfra, subamostra estratificada de 1000). "
             "official_result true: a chamada casa com esse protocolo. "
             "O JSON continua local e não é sozinho o registro do artigo."
         )
     else:
         note = (
-            "Chamada fora do protocolo de LLM de 2026-11-03. "
+            "Chamada fora do protocolo de LLM emendado em 2026-11-04. "
             "official_result false. Os desvios estão em protocol_deviations."
         )
     if subsample_result is None:

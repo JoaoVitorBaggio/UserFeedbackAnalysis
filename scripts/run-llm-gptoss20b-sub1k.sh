@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Seis corridas de LLM da decisão de 2026-11-03: zero-shot e few-shot,
-# sementes 0, 1 e 2, subamostra estratificada de 1000 do teste oficial.
+# Seis corridas de LLM: zero-shot e few-shot, sementes 0, 1 e 2,
+# subamostra estratificada de 1000 do teste oficial.
+# Modelo fechado em 2026-11-03: openai/gpt-oss-20b.
+# Backend fechado em 2026-11-04 (America/Sao_Paulo): DeepInfra.
+# A base da Groq foi revogada para estas corridas.
 #
 # Não guarda chave. O processo precisa herdar:
-#   OPENAI_API_KEY
-#   OPENAI_BASE_URL=https://api.groq.com/openai/v1
+#   OPENAI_API_KEY          (chave da DeepInfra; não entra no repositório)
+#   OPENAI_BASE_URL=https://api.deepinfra.com/v1/openai
 #   LLM_MODEL=openai/gpt-oss-20b
 #
-# O cliente manda User-Agent estável. Sem isso a Cloudflare da Groq
-# responde 403 com "error code: 1010" para o urllib. 429, 5xx e falha
-# transitória de rede repetem com espera limitada; a primeira 429 não
-# derruba a semente.
+# O cliente manda User-Agent estável e repete 429, 5xx e falha
+# transitória de rede com espera limitada. A primeira 429 não derruba
+# a semente. O cabeçalho nasceu porque a Cloudflare da Groq respondia
+# 403 "error code: 1010" ao urllib; continua em toda chamada.
 #
 # Uso, na raiz do repositório ou de qualquer diretório:
 #   scripts/run-llm-gptoss20b-sub1k.sh
@@ -25,12 +28,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 : "${OPENAI_API_KEY:?exporte OPENAI_API_KEY; este script não guarda chave}"
-: "${OPENAI_BASE_URL:?exporte OPENAI_BASE_URL=https://api.groq.com/openai/v1}"
+: "${OPENAI_BASE_URL:?exporte OPENAI_BASE_URL=https://api.deepinfra.com/v1/openai}"
 : "${LLM_MODEL:?exporte LLM_MODEL=openai/gpt-oss-20b}"
 
 base="${OPENAI_BASE_URL%/}"
-if [[ "$base" != "https://api.groq.com/openai/v1" ]]; then
-  echo "OPENAI_BASE_URL precisa ser https://api.groq.com/openai/v1 para estas corridas." >&2
+if [[ "$base" != "https://api.deepinfra.com/v1/openai" ]]; then
+  echo "OPENAI_BASE_URL precisa ser https://api.deepinfra.com/v1/openai para estas corridas." >&2
+  echo "A base da Groq (https://api.groq.com/openai/v1) foi revogada em 2026-11-04." >&2
   exit 1
 fi
 if [[ "$LLM_MODEL" != "openai/gpt-oss-20b" ]]; then
