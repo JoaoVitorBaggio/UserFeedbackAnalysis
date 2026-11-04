@@ -7,6 +7,11 @@
 #   OPENAI_BASE_URL=https://api.groq.com/openai/v1
 #   LLM_MODEL=openai/gpt-oss-20b
 #
+# O cliente manda User-Agent estável. Sem isso a Cloudflare da Groq
+# responde 403 com "error code: 1010" para o urllib. 429, 5xx e falha
+# transitória de rede repetem com espera limitada; a primeira 429 não
+# derruba a semente.
+#
 # Uso, na raiz do repositório ou de qualquer diretório:
 #   scripts/run-llm-gptoss20b-sub1k.sh
 #   scripts/run-llm-gptoss20b-sub1k.sh data/sat_dsat_annotation.jsonl

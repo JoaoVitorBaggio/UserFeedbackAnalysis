@@ -19,16 +19,30 @@ Sem chave, a corrida cai no dry-run e não chama a rede. Cada exemplo pede
 K inferências (padrão 3) e devolve a moda. A temperatura padrão do cliente
 é 0.7, para as amostras poderem divergir; 0 continua aceito e não é
 exigência do protocolo. O valor vai no corpo da chamada e no JSON.
+
+A chamada real manda ``User-Agent`` estável. O padrão do urllib
+(``Python-urllib/…``) recebe HTTP 403 da Cloudflare na frente da Groq,
+com corpo ``error code: 1010``. HTTP 429, HTTP 5xx e falha transitória
+de rede repetem no máximo ``LLM_MAX_ATTEMPTS`` vezes. A espera segue
+``try again in Xs`` (ou ``ms``) e o header ``Retry-After`` quando vêm
+no erro; sem pista, dobra a partir de 1s. Piso e teto cortam a espera,
+então a corrida não fica presa numa repetição infinita nem numa pista
+de horas.
 """
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import re
+import ssl
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from email.message import Message
 
 from user_feedback_analysis.labels import Label
 from user_feedback_analysis.llm.mock import mock_label
@@ -51,6 +65,31 @@ DEFAULT_INFERENCE_K = 3
 # Com temperatura 0 um endpoint determinístico devolve três rótulos iguais
 # e o voto majoritário não separa nada. 0.7 deixa as K amostras poderem divergir.
 DEFAULT_TEMPERATURE = 0.7
+# Cloudflare 1010 bloqueia o User-Agent do urllib. Este passa da borda e
+# ainda identifica o cliente. Conferido contra api.groq.com: o padrão toma
+# 403 "error code: 1010"; este chega no 401 da API.
+LLM_USER_AGENT = "Mozilla/5.0 (compatible; UserFeedbackAnalysis/llm-client)"
+# Uma tentativa inicial mais as repetições. Finito de propósito.
+LLM_MAX_ATTEMPTS = 8
+_RETRY_BASE_S = 1.0
+_RETRY_CAP_S = 120.0
+_RETRY_FLOOR_S = 0.05
+_TRY_AGAIN_RE = re.compile(
+    r"try again in\s+([0-9]+(?:\.[0-9]+)?)\s*(ms|s)\b",
+    re.IGNORECASE,
+)
+_TRANSIENT_REASON_MARKERS = (
+    "timed out",
+    "timeout",
+    "temporarily unavailable",
+    "temporary failure",
+    "connection reset",
+    "connection refused",
+    "connection aborted",
+    "network is unreachable",
+    "name or service not known",
+    "nodename nor servname",
+)
 
 _MISSING_MODEL = (
     "LLM_MODEL ausente. A decisão de 2026-11-03 usa "
@@ -86,6 +125,98 @@ def resolve_dry_run(requested: bool | None) -> bool:
     return True
 
 
+def _bounded_delay(seconds: float) -> float:
+    if seconds < _RETRY_FLOOR_S:
+        return _RETRY_FLOOR_S
+    if seconds > _RETRY_CAP_S:
+        return _RETRY_CAP_S
+    return seconds
+
+
+def _parse_try_again_seconds(detail: str) -> float | None:
+    """Segundos em ``try again in 1.5s`` ou ``try again in 250ms``.
+
+    ``200ms`` não pode virar 200 segundos: a unidade entra no casamento.
+    """
+    match = _TRY_AGAIN_RE.search(detail)
+    if match is None:
+        return None
+    value = float(match.group(1))
+    if match.group(2).lower() == "ms":
+        value /= 1000.0
+    return value
+
+
+def _parse_retry_after(headers: Message | None) -> float | None:
+    if headers is None:
+        return None
+    raw = headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(str(raw).strip())
+    except ValueError:
+        return None
+
+
+def _retry_delay_s(attempt: int, detail: str, headers: Message | None) -> float:
+    """Pista do servidor quando existe; senão backoff exponencial.
+
+    Se o corpo e o ``Retry-After`` discordam, espera o maior: os dois
+    são a API dizendo quanto falta, e o menor corta a janela cedo.
+    """
+    candidates = [
+        value
+        for value in (
+            _parse_try_again_seconds(detail),
+            _parse_retry_after(headers),
+        )
+        if value is not None
+    ]
+    if candidates:
+        return _bounded_delay(max(candidates))
+    return _bounded_delay(_RETRY_BASE_S * (2**attempt))
+
+
+def _retryable_status(code: int) -> bool:
+    # 403 da Cloudflare (1010) não melhora com repetição. Quem resolve é o User-Agent.
+    return code == 429 or 500 <= code <= 599
+
+
+def _transient_urlerror(exc: urllib.error.URLError) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return False
+    reason = exc.reason
+    # SSLError é OSError, mas certificado inválido não passa com repetição.
+    if isinstance(reason, ssl.SSLError):
+        return False
+    if isinstance(reason, (OSError, http.client.IncompleteRead)):
+        return True
+    text = str(reason).lower()
+    return any(marker in text for marker in _TRANSIENT_REASON_MARKERS)
+
+
+def _error_body(exc: urllib.error.HTTPError) -> str:
+    try:
+        payload = exc.read()
+    except Exception:
+        return ""
+    finally:
+        try:
+            exc.close()
+        except Exception:
+            pass
+    if isinstance(payload, str):
+        return payload
+    return payload.decode("utf-8", errors="replace")
+
+
+def _give_up(message: str, *, exhausted: bool, attempts: int) -> str:
+    if exhausted:
+        return f"{message} (após {attempts} tentativas)"
+    return message
+
+
 def chat_complete(
     prompt: str,
     *,
@@ -97,34 +228,73 @@ def chat_complete(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY ausente.")
     base = os.environ.get("OPENAI_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
-    body = {
-        "model": model,
-        "temperature": temperature,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You output only one classification label.",
+    encoded = json.dumps(
+        {
+            "model": model,
+            "temperature": temperature,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You output only one classification label.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+        }
+    ).encode("utf-8")
+    url = f"{base}/chat/completions"
+    raw: bytes | None = None
+    for attempt in range(LLM_MAX_ATTEMPTS):
+        request = urllib.request.Request(
+            url,
+            data=encoded,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": LLM_USER_AGENT,
             },
-            {"role": "user", "content": prompt},
-        ],
-    }
-    request = urllib.request.Request(
-        f"{base}/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
-        raise RuntimeError(f"LLM HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Falha ao chamar o LLM: {exc.reason}") from exc
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            detail = _error_body(exc)
+            exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
+            if exhausted or not _retryable_status(exc.code):
+                raise RuntimeError(
+                    _give_up(
+                        f"LLM HTTP {exc.code}: {detail[:500]}",
+                        exhausted=exhausted and _retryable_status(exc.code),
+                        attempts=attempt + 1,
+                    )
+                ) from exc
+            time.sleep(_retry_delay_s(attempt, detail, exc.headers))
+        except urllib.error.URLError as exc:
+            exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
+            transient = _transient_urlerror(exc)
+            if exhausted or not transient:
+                raise RuntimeError(
+                    _give_up(
+                        f"Falha ao chamar o LLM: {exc.reason}",
+                        exhausted=exhausted and transient,
+                        attempts=attempt + 1,
+                    )
+                ) from exc
+            time.sleep(_retry_delay_s(attempt, "", None))
+        except (TimeoutError, ConnectionError, http.client.IncompleteRead) as exc:
+            exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
+            if exhausted:
+                raise RuntimeError(
+                    _give_up(
+                        f"Falha ao chamar o LLM: {exc}",
+                        exhausted=True,
+                        attempts=attempt + 1,
+                    )
+                ) from exc
+            time.sleep(_retry_delay_s(attempt, "", None))
+    if raw is None:
+        raise RuntimeError("Falha ao chamar o LLM.")
     try:
         payload = json.loads(raw.decode("utf-8"))
         content = payload["choices"][0]["message"]["content"]
