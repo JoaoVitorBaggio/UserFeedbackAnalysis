@@ -12,10 +12,22 @@ de sempre. Retomar não entra nessa regra: não muda modelo, base,
 subamostra, K, k nem semente.
 
 Um exemplo conta como concluído quando as K inferências já viraram
-um voto. Queda no meio de um exemplo, ou recusa que esgotou as
-tentativas, deixa o anterior no disco e repete esse exemplo na
-próxima invocação. O arquivo de outra corrida no mesmo caminho é
-erro: não é apagado e não é misturado.
+um voto. Queda no meio de um exemplo deixa o anterior no disco e
+repete esse exemplo na próxima invocação. Recusa ou ``content``
+vazio que esgota as tentativas não derruba o exemplo: a inferência
+entra como sem sinal, com ``refusal_fallback`` e o texto cru na
+linha, para a retomada não perder o desvio. HTTP 429, HTTP 5xx e
+falha de rede, esgotadas as tentativas, ainda param a semente nesse
+exemplo. O arquivo de outra corrida no mesmo caminho é erro: não é
+apagado e não é misturado.
+
+A versão do envelope pode subir. A versão 1, gravada em 2026-11-04,
+continua legível: não exige os campos de recusa. O ``version`` dentro
+do fingerprint não sobe. Subir esse número mudaria a identidade da
+corrida e o checkpoint já pago deixaria de retomar. O few-shot
+semente 2 em ``runs/llm-gptoss20b-sub1k-few-seed2.json``, no
+``next_index`` 786, é esse caso. JSON final antigo, zero sementes
+0–2 e few sementes 0–1, também retoma: não pede campo de recusa.
 """
 
 from __future__ import annotations
@@ -26,13 +38,19 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from user_feedback_analysis.harness import write_json
-from user_feedback_analysis.labels import normalize_label
-from user_feedback_analysis.llm.client import VoteResult
+from user_feedback_analysis.labels import Label, normalize_label
+from user_feedback_analysis.llm.client import RefusalFallback, VoteResult
 from user_feedback_analysis.llm.vote import majority_vote
 from user_feedback_analysis.records import Example
 
 CHECKPOINT_KIND = "llm_checkpoint"
-CHECKPOINT_VERSION = 1
+# Identidade da corrida. Entra no fingerprint e no JSON final.
+# Não subir: o objeto inteiro é comparado na retomada.
+FINGERPRINT_VERSION = 1
+# Envelope do arquivo. A versão 1 não tem linha de recusa.
+# A versão 2 grava refusal_fallback quando a inferência caiu em sem sinal.
+CHECKPOINT_VERSION = 2
+READABLE_CHECKPOINT_VERSIONS = (1, 2)
 _FINAL_ARMS = ("llm_zero_shot", "llm_few_shot")
 
 
@@ -65,7 +83,7 @@ def build_fingerprint(
     ``r{índice}``: outro corpus no mesmo índice não pode herdar o voto.
     """
     payload: dict[str, object] = {
-        "version": CHECKPOINT_VERSION,
+        "version": FINGERPRINT_VERSION,
         "shot": shot,
         "seed": seed,
         "few_shot_seed": few_shot_seed,
@@ -158,10 +176,11 @@ def _from_checkpoint(
     examples: Sequence[Example],
 ) -> tuple[VoteResult, ...]:
     version = _as_int(saved.get("version"), "version")
-    if version != CHECKPOINT_VERSION:
+    if version not in READABLE_CHECKPOINT_VERSIONS:
+        accepted = ", ".join(str(item) for item in READABLE_CHECKPOINT_VERSIONS)
         raise ValueError(
             f"{path} é um checkpoint versão {version}. "
-            f"Este código lê a versão {CHECKPOINT_VERSION}. Não apaguei o arquivo."
+            f"Este código lê as versões {accepted}. Não apaguei o arquivo."
         )
     saved_fp = saved.get("fingerprint")
     if not isinstance(saved_fp, dict):
@@ -237,14 +256,16 @@ def _from_final(
     for pred, vote in zip(predictions, votes):
         if not isinstance(pred, dict):
             raise ValueError(f"{path} tem uma predição que não é objeto.")
-        rows.append(
-            {
-                "id": pred.get("id"),
-                "gold": pred.get("gold"),
-                "pred": pred.get("pred"),
-                "votes": vote,
-            }
-        )
+        row: dict[str, object] = {
+            "id": pred.get("id"),
+            "gold": pred.get("gold"),
+            "pred": pred.get("pred"),
+            "votes": vote,
+        }
+        if "refusal_fallback" in pred or "refusal_responses" in pred:
+            row["refusal_fallback"] = pred.get("refusal_fallback")
+            row["refusal_responses"] = pred.get("refusal_responses")
+        rows.append(row)
     return _rows_to_votes(path, rows, examples, fingerprint)
 
 
@@ -341,18 +362,94 @@ def _rows_to_votes(
                 f"{path} diz decisão {stored!r} em {example_id} e o recálculo "
                 f"é {decision!r}. Não apaguei o arquivo."
             )
-        voted.append(VoteResult(label=label, votes=tuple(labels), decision=decision))
+        refusals = _refusals_from_row(path, row, example_id, labels)
+        voted.append(
+            VoteResult(
+                label=label,
+                votes=tuple(labels),
+                decision=decision,
+                refusals=refusals,
+            )
+        )
     return tuple(voted)
 
 
+def _refusals_from_row(
+    path: Path,
+    row: Mapping[str, object],
+    example_id: str,
+    labels: Sequence[Label],
+) -> tuple[RefusalFallback, ...]:
+    """Campos opcionais. Arquivo antigo não tem recusa gravada.
+
+    Versão 1 e JSON final anterior a 2026-11-06 omitem as chaves.
+    Isso é ausência de fallback, não erro. Chave presente e torta
+    não é apagada: a retomada recusa o arquivo.
+    """
+    has_flag = "refusal_fallback" in row
+    has_responses = "refusal_responses" in row
+    if not has_flag and not has_responses:
+        return ()
+    flag = row.get("refusal_fallback")
+    responses = row.get("refusal_responses")
+    if flag is False and responses in (None, []):
+        return ()
+    if flag is not True or not isinstance(responses, list) or not responses:
+        raise ValueError(
+            f"{path} tem refusal_fallback inconsistente em {example_id}. "
+            "Não apaguei o arquivo."
+        )
+    found: list[RefusalFallback] = []
+    seen: set[int] = set()
+    previous = -1
+    for item in responses:
+        if not isinstance(item, dict):
+            raise ValueError(
+                f"{path} tem uma recusa que não é objeto em {example_id}. "
+                "Não apaguei o arquivo."
+            )
+        index = item.get("index")
+        text = item.get("text")
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise ValueError(
+                f"{path} tem índice de recusa inválido em {example_id}. "
+                "Não apaguei o arquivo."
+            )
+        if index < 0 or index >= len(labels) or index in seen or index <= previous:
+            raise ValueError(
+                f"{path} tem índice de recusa {index} fora da ordem em {example_id}. "
+                "Não apaguei o arquivo."
+            )
+        if not isinstance(text, str):
+            raise ValueError(
+                f"{path} tem texto cru de recusa inválido em {example_id}. "
+                "Não apaguei o arquivo."
+            )
+        if labels[index] is not Label.NO_SIGNAL:
+            raise ValueError(
+                f"{path} marca recusa na inferência {index} de {example_id} "
+                f"e o voto é {labels[index].value!r}. Não apaguei o arquivo."
+            )
+        seen.add(index)
+        previous = index
+        found.append(RefusalFallback(index=index, raw_response=text))
+    return tuple(found)
+
+
 def _row(example: Example, result: VoteResult) -> dict[str, object]:
-    return {
+    row: dict[str, object] = {
         "id": example.example_id,
         "gold": example.label.value,
         "pred": result.label.value,
         "votes": [label.value for label in result.votes],
         "decision": result.decision,
     }
+    if result.refusals:
+        row["refusal_fallback"] = True
+        row["refusal_responses"] = [
+            {"index": item.index, "text": item.raw_response} for item in result.refusals
+        ]
+    return row
 
 
 def _digest(examples: Sequence[Example]) -> str:

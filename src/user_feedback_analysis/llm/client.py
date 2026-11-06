@@ -40,9 +40,11 @@ O gpt-oss na DeepInfra às vezes devolve a cadeia de pensamento em
 repete; o outro campo não vira rótulo. Recusa (texto sem um SAT, DSAT
 ou sem sinal único) também repete, no mesmo prompt e na mesma
 temperatura. ``parse_label`` segue estrito e não inventa rótulo.
-Esgotadas as tentativas, o ``ValueError`` traz o texto recusado e a
-contagem. Uma recusa estável ainda derruba o exemplo, só que depois
-do teto, não na primeira resposta.
+Esgotadas as tentativas de recusa ou de ``content`` vazio, essa
+inferência conta como ``sem sinal`` (decisão de João em 2026-11-06).
+O texto cru da última resposta vai no fallback, para o relatório
+marcar o desvio. A semente não para. HTTP 429, HTTP 5xx e falha de
+rede, esgotadas as tentativas, continuam ``RuntimeError``.
 """
 
 from __future__ import annotations
@@ -240,6 +242,31 @@ def _give_up(message: str, *, exhausted: bool, attempts: int) -> str:
     return message
 
 
+class CompletionText(str):
+    """Texto de uma chamada. Recusa persistente marca o fallback.
+
+    Compara igual ao conteúdo, e ``parse_label`` lê a string. O
+    fallback só fica verdadeiro depois do teto de tentativas daquela
+    inferência. ``raw_response`` é o último ``content``; vazio quando
+    o campo veio nulo ou em branco. HTTP 429 e rede não usam esta marca.
+    """
+
+    refusal_fallback: bool
+    raw_response: str
+
+    def __new__(
+        cls,
+        content: str,
+        *,
+        refusal_fallback: bool = False,
+        raw_response: str = "",
+    ) -> CompletionText:
+        obj = str.__new__(cls, content)
+        obj.refusal_fallback = refusal_fallback
+        obj.raw_response = raw_response
+        return obj
+
+
 def _completion_content(payload: object) -> str | None:
     """Texto de ``choices[0].message.content``.
 
@@ -276,7 +303,7 @@ def chat_complete(
     model: str,
     timeout: float = 60.0,
     temperature: float = DEFAULT_TEMPERATURE,
-) -> str:
+) -> CompletionText:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY ausente.")
@@ -357,21 +384,32 @@ def chat_complete(
         if content is not None:
             try:
                 parse_label(content)
-            except ValueError as exc:
-                problem = str(exc)
+            except ValueError:
+                last_raw = content
             else:
-                return content
+                return CompletionText(content)
         else:
-            problem = "Resposta do LLM com content vazio."
+            last_raw = ""
         # Mesma fila de LLM_MAX_ATTEMPTS. O índice da tentativa já conta
         # 429 e rede, então uma recusa no meio não recomeça do 1s.
-        exhausted = attempt + 1 >= LLM_MAX_ATTEMPTS
-        if exhausted:
-            raise ValueError(
-                _give_up(problem, exhausted=True, attempts=attempt + 1)
+        # Esgotada a fila, a inferência vira sem sinal. 429 e rede, no
+        # mesmo teto, continuam subindo acima e não caem aqui.
+        if attempt + 1 >= LLM_MAX_ATTEMPTS:
+            return CompletionText(
+                Label.NO_SIGNAL.value,
+                refusal_fallback=True,
+                raw_response=last_raw,
             )
         time.sleep(_retry_delay_s(attempt, "", None))
     raise RuntimeError("Falha ao chamar o LLM.")
+
+
+@dataclass(frozen=True)
+class RefusalFallback:
+    """Uma inferência que esgotou a recusa e contou como sem sinal."""
+
+    index: int
+    raw_response: str
 
 
 @dataclass(frozen=True)
@@ -379,6 +417,7 @@ class VoteResult:
     label: Label
     votes: tuple[Label, ...]
     decision: str
+    refusals: tuple[RefusalFallback, ...] = ()
 
 
 def classify_votes(
@@ -397,8 +436,10 @@ def classify_votes(
 
     Dry-run repete o mock local K vezes e não chama ``complete`` nem a rede.
     Na chamada real, ``chat_complete`` repete recusa e ``content`` vazio
-    na mesma fila das falhas de rede. ``complete`` injetado não ganha
-    essa fila: quem substitui o cliente trata a resposta que devolve.
+    na mesma fila das falhas de rede. Esgotada essa fila, a inferência
+    entra como sem sinal e fica em ``refusals``. ``complete`` injetado
+    não ganha essa fila: quem substitui o cliente trata a resposta que
+    devolve, salvo se ela já vier marcada como fallback.
     """
     if isinstance(k, bool) or not isinstance(k, int) or k < 1:
         raise ValueError("K é um inteiro >= 1. O protocolo usa K=3.")
@@ -411,6 +452,7 @@ def classify_votes(
     from user_feedback_analysis.llm.prompts import build_prompt, clip_text
 
     prompt, _ = build_prompt(text, demonstrations, max_chars=max_chars)
+    refusals: list[RefusalFallback] = []
     if dry_run:
         shown, _ = clip_text(text, max_chars)
         votes = [mock_label(shown) for _ in range(k)]
@@ -419,16 +461,35 @@ def classify_votes(
             raise RuntimeError(_MISSING_MODEL)
         sender = complete if complete is not None else chat_complete
         votes = []
-        for _ in range(k):
+        for index in range(k):
             raw = sender(
                 prompt,
                 model=model,
                 timeout=timeout,
                 temperature=float(temperature),
             )
-            votes.append(parse_label(raw))
+            if getattr(raw, "refusal_fallback", False):
+                label = parse_label(raw)
+                if label is not Label.NO_SIGNAL:
+                    raise RuntimeError(
+                        "Fallback de recusa devolveu um texto que não é sem sinal."
+                    )
+                raw_response = getattr(raw, "raw_response", "")
+                if not isinstance(raw_response, str):
+                    raise RuntimeError("Fallback de recusa sem texto cru.")
+                refusals.append(
+                    RefusalFallback(index=index, raw_response=raw_response)
+                )
+                votes.append(label)
+            else:
+                votes.append(parse_label(raw))
     label, decision = majority_vote(votes)
-    return VoteResult(label=label, votes=tuple(votes), decision=decision)
+    return VoteResult(
+        label=label,
+        votes=tuple(votes),
+        decision=decision,
+        refusals=tuple(refusals),
+    )
 
 
 def classify_text(
