@@ -10,11 +10,13 @@ from user_feedback_analysis.harness import write_json
 from user_feedback_analysis.labels import Label
 from user_feedback_analysis.llm.checkpoint import (
     CHECKPOINT_KIND,
+    CHECKPOINT_VERSION,
+    FINGERPRINT_VERSION,
     build_fingerprint,
     load_resume,
     write_checkpoint,
 )
-from user_feedback_analysis.llm.client import VoteResult, classify_votes
+from user_feedback_analysis.llm.client import RefusalFallback, VoteResult, classify_votes
 from user_feedback_analysis.llm.protocol import (
     PROTOCOL_LLM_BASE_URL,
     PROTOCOL_LLM_MODEL_ID,
@@ -405,3 +407,205 @@ def test_checkpoint_does_not_store_a_key_pasted_into_the_base_url(
     saved = json.loads(text)
     assert saved["fingerprint"]["base_url"] == "https://api.deepinfra.com/v1/openai"
     assert saved["official_result"] is False
+
+
+_FINGERPRINT_KEYS = {
+    "version",
+    "shot",
+    "seed",
+    "few_shot_seed",
+    "k",
+    "inference_k",
+    "temperature",
+    "max_chars",
+    "dry_run",
+    "model_id",
+    "base_url",
+    "test_subsample",
+    "test_fraction",
+    "test_size",
+    "per_class",
+    "strict_per_class",
+    "split_unit",
+    "role",
+    "val_size",
+    "demonstration_ids",
+    "evaluated_ids",
+    "demonstration_digest",
+    "evaluated_digest",
+}
+
+
+def test_fingerprint_stays_on_version_1(tmp_path: Path):
+    examples = [_example(0, "Thanks, this is perfect.", Label.SAT)]
+    fingerprint = _fingerprint(examples)
+    assert fingerprint["version"] == FINGERPRINT_VERSION == 1
+    assert set(fingerprint) == _FINGERPRINT_KEYS
+    path = tmp_path / "run.json"
+    write_checkpoint(path, fingerprint, examples, [_vote(Label.SAT)])
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["version"] == CHECKPOINT_VERSION == 2
+    assert saved["fingerprint"] == fingerprint
+
+
+def test_version_1_checkpoint_resumes_like_few_seed2(tmp_path: Path):
+    """Envelope antigo, sem recusa gravada. O few semente 2 está nesse formato.
+
+    ``runs/llm-gptoss20b-sub1k-few-seed2.json`` para no next_index 786.
+    Aqui o prefixo é curto; a leitura é a mesma, e o fingerprint não muda.
+    """
+    examples = [
+        _example(0, "Thanks, this is perfect.", Label.SAT),
+        _example(1, "This is still wrong, fix it.", Label.DSAT),
+    ]
+    fingerprint = _fingerprint(examples)
+    path = tmp_path / "llm-gptoss20b-sub1k-few-seed2.json"
+    payload = {
+        "kind": CHECKPOINT_KIND,
+        "version": 1,
+        "complete": False,
+        "next_index": 1,
+        "n_completed": 1,
+        "n_expected": 2,
+        "official_result": False,
+        "fingerprint": fingerprint,
+        "completed": [
+            {
+                "id": "r0",
+                "gold": "SAT",
+                "pred": "SAT",
+                "votes": ["SAT"],
+                "decision": "majority",
+            }
+        ],
+        "note": "Checkpoint da corrida de LLM.",
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    resumed = load_resume(path, fingerprint, examples)
+    assert path.read_text(encoding="utf-8") == before
+    assert len(resumed) == 1
+    assert resumed[0].label is Label.SAT
+    assert resumed[0].refusals == ()
+
+    unknown = json.loads(before)
+    unknown["version"] = 3
+    path.write_text(json.dumps(unknown), encoding="utf-8")
+    held = path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="versão 3"):
+        load_resume(path, fingerprint, examples)
+    assert path.read_text(encoding="utf-8") == held
+
+
+def test_checkpoint_keeps_the_refusal_text_for_resume(tmp_path: Path):
+    examples = [
+        _example(0, "Thanks, this is perfect.", Label.SAT),
+        _example(1, "This is still wrong, fix it.", Label.DSAT),
+    ]
+    fingerprint = _fingerprint(examples, inferences=3)
+    voted = VoteResult(
+        label=Label.SAT,
+        votes=(Label.NO_SIGNAL, Label.SAT, Label.SAT),
+        decision="majority",
+        refusals=(RefusalFallback(index=0, raw_response="I’m sorry, but I can’t help with that."),),
+    )
+    path = tmp_path / "run.json"
+    write_checkpoint(path, fingerprint, examples, [voted])
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["version"] == 2
+    assert saved["fingerprint"]["version"] == 1
+    assert saved["completed"][0]["refusal_fallback"] is True
+    assert saved["completed"][0]["refusal_responses"] == [
+        {"index": 0, "text": "I’m sorry, but I can’t help with that."}
+    ]
+    resumed = load_resume(path, fingerprint, examples)
+    assert resumed[0].refusals == voted.refusals
+    assert resumed[0].label is Label.SAT
+
+    saved["version"] = 1
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    again = load_resume(path, fingerprint, examples)
+    assert again[0].refusals[0].raw_response == "I’m sorry, but I can’t help with that."
+
+
+def test_old_final_json_without_refusal_fields_is_complete(tmp_path: Path):
+    """JSON final de zero 0–2 e few 0–1 não tem refusal_fallback.
+
+    load_resume aceita os dois braços como corrida completa.
+    """
+    examples = [
+        _example(0, "Thanks, this is perfect.", Label.SAT),
+        _example(1, "Write a short poem about rain.", Label.NO_SIGNAL),
+    ]
+    fingerprint = _fingerprint(examples)
+    for arm in ("llm_zero_shot", "llm_few_shot"):
+        path = tmp_path / f"{arm}.json"
+        payload = {
+            "arm": arm,
+            "official_result": True,
+            "predictions": [
+                {"id": "r0", "gold": "SAT", "pred": "SAT"},
+                {"id": "r1", "gold": "sem sinal", "pred": "sem sinal"},
+            ],
+            "inference_votes": [["SAT"], ["sem sinal"]],
+            "run_fingerprint": fingerprint,
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        resumed = load_resume(path, fingerprint, examples)
+        assert len(resumed) == len(examples)
+        assert resumed[0].refusals == ()
+        assert resumed[1].label is Label.NO_SIGNAL
+        assert "refusal_fallback" not in path.read_text(encoding="utf-8")
+
+
+def test_final_json_refusal_is_restored_on_resume(tmp_path: Path):
+    examples = [_example(0, "Thanks, this is perfect.", Label.SAT)]
+    fingerprint = _fingerprint(examples, inferences=3)
+    path = tmp_path / "final.json"
+    payload = {
+        "arm": "llm_zero_shot",
+        "predictions": [
+            {
+                "id": "r0",
+                "gold": "SAT",
+                "pred": "SAT",
+                "refusal_fallback": True,
+                "refusal_responses": [{"index": 1, "text": ""}],
+            }
+        ],
+        "inference_votes": [["SAT", "sem sinal", "SAT"]],
+        "run_fingerprint": fingerprint,
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    resumed = load_resume(path, fingerprint, examples)
+    assert resumed[0].label is Label.SAT
+    assert resumed[0].refusals == (RefusalFallback(index=1, raw_response=""),)
+
+
+def test_runner_resumes_a_version_1_checkpoint(
+    tiny_path: Path, tmp_path: Path, monkeypatch
+):
+    _isolate(monkeypatch)
+    output = tmp_path / "zero.json"
+    calls: list[str] = []
+    _counting_votes(monkeypatch, calls, fail_at=2)
+    assert main(_zero_args(tiny_path, output)) == 1
+    saved = json.loads(output.read_text(encoding="utf-8"))
+    assert saved["version"] == CHECKPOINT_VERSION
+    assert saved["fingerprint"]["version"] == 1
+    assert saved["next_index"] == 1
+    saved["version"] = 1
+    for row in saved["completed"]:
+        row.pop("refusal_fallback", None)
+        row.pop("refusal_responses", None)
+    output.write_text(json.dumps(saved), encoding="utf-8")
+    fingerprint = saved["fingerprint"]
+    calls.clear()
+    _counting_votes(monkeypatch, calls)
+    assert main(_zero_args(tiny_path, output)) == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert calls
+    assert payload["resume"]["n_reused"] == 1
+    assert payload["run_fingerprint"] == fingerprint
+    assert payload["predictions"][0]["id"] == saved["completed"][0]["id"]
+    assert "refusal_fallback" not in payload["predictions"][0]

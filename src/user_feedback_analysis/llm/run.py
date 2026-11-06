@@ -13,6 +13,12 @@ no prompt. O padrão fechado é 3; antes estava em aberto.
 depois do split. Sem a flag, o teste oficial inteiro é avaliado. A
 flag não muda o treino.
 
+Recusa ou ``content`` vazio, esgotadas as tentativas daquela
+inferência, conta como sem sinal (2026-11-06). A semente segue. O
+caso entra na predição, no checkpoint e em ``protocol_deviations``.
+``official_result`` fica falso. HTTP 429, HTTP 5xx e falha de rede
+continuam parando a semente; o checkpoint do prefixo fica no disco.
+
 Com ``--output``, cada exemplo concluído substitui esse arquivo por
 um checkpoint (replace atômico). A mesma invocação, no mesmo caminho,
 continua do ``next_index`` e não refaz o voto já gravado. Sem
@@ -64,6 +70,7 @@ from user_feedback_analysis.llm.client import (
     DEFAULT_BASE_URL,
     DEFAULT_INFERENCE_K,
     DEFAULT_TEMPERATURE,
+    VoteResult,
     classify_votes,
     resolve_dry_run,
 )
@@ -72,6 +79,7 @@ from user_feedback_analysis.llm.protocol import (
     PROTOCOL_FEW_SHOT_K,
     PROTOCOL_LLM_BASE_URL,
     PROTOCOL_LLM_MODEL_ID,
+    apply_refusal_deviation,
     llm_official_result,
     model_requirement_record,
     public_base_url,
@@ -303,6 +311,9 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
     predictions = [result.label for result in voted]
     gold = [example.label for example in evaluated]
     report = evaluate(gold, predictions)
+    refusal_cases = _refusal_cases(evaluated, voted)
+    config_official = official
+    official, deviations = apply_refusal_deviation(official, deviations, refusal_cases)
     n_test_truncated = _n_truncated([example.text for example in evaluated], max_chars)
     n_demo_truncated = _n_truncated([example.text for example in demonstrations], max_chars)
     if dry_run:
@@ -317,11 +328,24 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
             "official_result true: a chamada casa com esse protocolo. "
             "O JSON continua local e não é sozinho o registro do artigo."
         )
+    elif config_official:
+        note = (
+            "Chamada nos botões do protocolo de LLM emendado em 2026-11-04 "
+            "(openai/gpt-oss-20b na DeepInfra, subamostra estratificada de 1000). "
+            "Recusa persistente foi contada como sem sinal. "
+            "official_result false: o desvio fica visível e a corrida entra no relatório. "
+            "Os desvios estão em protocol_deviations."
+        )
     else:
         note = (
             "Chamada fora do protocolo de LLM emendado em 2026-11-04. "
             "official_result false. Os desvios estão em protocol_deviations."
         )
+        if refusal_cases:
+            note += (
+                " Recusa persistente também foi contada como sem sinal "
+                "e está em protocol_deviations."
+            )
     if n_reused:
         note += (
             f" Retomada: {n_reused} exemplos já estavam no --output "
@@ -338,10 +362,11 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
         arm="llm_zero_shot" if args.shot == "zero" else "llm_few_shot",
         report=report,
         split=split.manifest.to_dict(),
-        predictions=prediction_rows(
+        predictions=_prediction_rows(
             [example.example_id for example in evaluated],
             gold,
             predictions,
+            voted,
         ),
         extra={
             "dry_run": dry_run,
@@ -382,6 +407,40 @@ def run_llm(args: argparse.Namespace) -> tuple[dict[str, object], str, str]:
 
 def _n_truncated(texts: list[str], max_chars: int | None) -> int:
     return sum(1 for text in texts if clip_text(text, max_chars)[1])
+
+
+def _refusal_cases(
+    examples: Sequence[Example],
+    voted: Sequence[VoteResult],
+) -> list[tuple[str, tuple[int, ...]]]:
+    cases: list[tuple[str, tuple[int, ...]]] = []
+    for example, result in zip(examples, voted):
+        if not result.refusals:
+            continue
+        cases.append((example.example_id, tuple(item.index for item in result.refusals)))
+    return cases
+
+
+def _prediction_rows(
+    example_ids: Sequence[str],
+    y_true: Sequence[object],
+    y_pred: Sequence[object],
+    voted: Sequence[VoteResult],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = [
+        dict(row)
+        for row in prediction_rows(example_ids, y_true, y_pred)
+    ]
+    if len(rows) != len(voted):
+        raise RuntimeError("Predições e votos divergem.")
+    for row, result in zip(rows, voted):
+        if not result.refusals:
+            continue
+        row["refusal_fallback"] = True
+        row["refusal_responses"] = [
+            {"index": item.index, "text": item.raw_response} for item in result.refusals
+        ]
+    return rows
 
 
 if __name__ == "__main__":

@@ -15,20 +15,31 @@ Groq foi revogada para estas corridas, do mesmo modo que Llama tinha
 sido revogado. O id do modelo e os demais botões não mudam.
 
 ``official_result`` sai verdadeiro só quando a chamada real casa com
-esse arranjo. Dry-run e qualquer desvio ficam falsos, com a lista
+esse arranjo e nenhuma inferência caiu no fallback de recusa.
+Dry-run e qualquer desvio ficam falsos, com a lista
 ``protocol_deviations``. Cardiff e Transformer não usam esta regra:
 o harness deles continua com ``official_result`` falso.
+
+Em 2026-11-06 (America/Sao_Paulo) João decidiu que recusa ou
+``content`` vazio, esgotadas as tentativas daquela inferência, conta
+como ``sem sinal`` em vez de parar a semente. O caso entra em
+``protocol_deviations``. A corrida continua no relatório, e
+``official_result`` fica falso: desvio não vira resultado oficial
+em silêncio. HTTP 429, HTTP 5xx e falha de rede continuam erro.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from user_feedback_analysis.data.split import PROTOCOL_TEST_FRACTION
 
 PROTOCOL_LLM_DECISION = "2026-11-03"
 PROTOCOL_LLM_BACKEND_DECISION = "2026-11-04"
+PROTOCOL_LLM_REFUSAL_DECISION = "2026-11-06"
 PROTOCOL_LLM_TIMEZONE = "America/Sao_Paulo"
+REFUSAL_FALLBACK_PHRASE = "recusa persistente contada como sem sinal"
 PROTOCOL_LLM_MODEL_ID = "openai/gpt-oss-20b"
 # Consulta em 2026-11-04 à doc de chat da DeepInfra: base OpenAI-compatible,
 # POST {base}/chat/completions, modelo openai/gpt-oss-20b.
@@ -51,6 +62,10 @@ OFFICIAL_RESULT_POLICY = (
     "true quer dizer que a chamada casa com esse protocolo de LLM. "
     "O JSON continua local, fora do git, e não é sozinho o registro do artigo. "
     "Dry-run e qualquer desvio ficam false, com protocol_deviations. "
+    f"Em {PROTOCOL_LLM_REFUSAL_DECISION}, {REFUSAL_FALLBACK_PHRASE} "
+    "também é desvio: a corrida entra no relatório e "
+    "official_result fica false. HTTP 429, HTTP 5xx e falha de rede, "
+    "esgotadas as tentativas, continuam erro e não viram sem sinal. "
     f"Isto revoga {REVOKED_LLM_REQUIREMENT}. "
     f"A base {REVOKED_LLM_BASE_URL} foi revogada em {PROTOCOL_LLM_BACKEND_DECISION}: "
     "a cota gratuita diária da Groq (TPD) esgotou, e a rota OpenRouter para a Groq "
@@ -164,6 +179,49 @@ def llm_official_result(
     if not _is_int(seed) or seed not in PROTOCOL_LLM_SEEDS:
         deviations.append("sementes do protocolo são 0, 1 e 2.")
     return (len(deviations) == 0, deviations)
+
+
+def format_refusal_deviation(
+    cases: Sequence[tuple[str, Sequence[int]]],
+) -> str | None:
+    """Uma linha para ``protocol_deviations``, ou None sem casos.
+
+    A contagem é de inferências. Os ids e os índices mostram onde a
+    recusa persistente virou sem sinal.
+    """
+    cleaned: list[tuple[str, tuple[int, ...]]] = []
+    for example_id, indexes in cases:
+        ordered = tuple(indexes)
+        if not ordered:
+            continue
+        cleaned.append((example_id, ordered))
+    if not cleaned:
+        return None
+    n = sum(len(indexes) for _, indexes in cleaned)
+    parts = [
+        f"{example_id}[{', '.join(str(index) for index in indexes)}]"
+        for example_id, indexes in cleaned
+    ]
+    noun = "inferência" if n == 1 else "inferências"
+    return f"{REFUSAL_FALLBACK_PHRASE}: {n} {noun} ({', '.join(parts)})."
+
+
+def apply_refusal_deviation(
+    official: bool,
+    deviations: Sequence[str],
+    cases: Sequence[tuple[str, Sequence[int]]],
+) -> tuple[bool, list[str]]:
+    """Junta a recusa persistente aos desvios dos botões.
+
+    Sem casos, o par de entrada volta igual. Com casos, ou com
+    qualquer desvio já listado, ``official_result`` fica falso.
+    A corrida não é descartada: quem chama ainda grava o relatório.
+    """
+    merged = list(deviations)
+    note = format_refusal_deviation(cases)
+    if note is not None:
+        merged.append(note)
+    return (bool(official) and not merged), merged
 
 
 def _fraction_is_protocol(value: object) -> bool:

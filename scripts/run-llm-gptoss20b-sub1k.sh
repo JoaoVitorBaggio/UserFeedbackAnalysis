@@ -21,8 +21,13 @@
 # exemplo concluído (replace atômico). Rodar este script de novo
 # continua desse arquivo: voto pronto não volta para a DeepInfra.
 # Outra corrida no mesmo caminho é erro e o arquivo não é apagado.
-# Recusa que esgota as tentativas para a semente; o checkpoint fica,
-# e a próxima invocação repete esse exemplo.
+# Recusa ou content vazio que esgota as tentativas conta aquela
+# inferência como sem sinal, grava o desvio na linha do checkpoint
+# e segue a semente (decisão de 2026-11-06). official_result fica
+# false. 429, 5xx e falha de rede, esgotadas as tentativas, ainda
+# param a semente; o checkpoint fica, e a próxima invocação repete
+# esse exemplo. Checkpoint versão 1, como o few semente 2 no
+# next_index 786, continua de onde parou. O fingerprint não muda.
 #
 # Uso, na raiz do repositório ou de qualquer diretório:
 #   scripts/run-llm-gptoss20b-sub1k.sh

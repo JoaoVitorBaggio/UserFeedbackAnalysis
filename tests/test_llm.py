@@ -18,6 +18,7 @@ from user_feedback_analysis.llm.client import (
     DEFAULT_BASE_URL,
     LLM_MAX_ATTEMPTS,
     LLM_USER_AGENT,
+    RefusalFallback,
     VoteResult,
     _RETRY_CAP_S,
     chat_complete,
@@ -29,7 +30,9 @@ from user_feedback_analysis.llm.protocol import (
     OFFICIAL_RESULT_POLICY,
     PROTOCOL_LLM_BASE_URL,
     PROTOCOL_LLM_MODEL_ID,
+    REFUSAL_FALLBACK_PHRASE,
     REVOKED_LLM_BASE_URL,
+    apply_refusal_deviation,
     llm_official_result,
     public_base_url,
 )
@@ -500,7 +503,7 @@ def test_chat_complete_reads_the_label_from_content_when_reasoning_is_present(mo
     assert sleeps == []
 
 
-def test_chat_complete_stops_retrying_a_refusal_or_empty_content(monkeypatch):
+def test_chat_complete_counts_a_persistent_refusal_as_no_signal(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     sleeps: list[float] = []
     monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
@@ -508,10 +511,10 @@ def test_chat_complete_stops_retrying_a_refusal_or_empty_content(monkeypatch):
         monkeypatch,
         [_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)],
     )
-    with pytest.raises(ValueError, match=rf"após {LLM_MAX_ATTEMPTS} tentativas") as refusal:
-        chat_complete("Classify.", model="m")
-    assert _REFUSAL in str(refusal.value)
-    assert "rótulo único" in str(refusal.value)
+    refusal = chat_complete("Classify.", model="m")
+    assert refusal == "sem sinal"
+    assert refusal.refusal_fallback is True
+    assert refusal.raw_response == _REFUSAL
     assert seen["calls"] == LLM_MAX_ATTEMPTS
     assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
 
@@ -524,11 +527,32 @@ def test_chat_complete_stops_retrying_a_refusal_or_empty_content(monkeypatch):
         ],
     )
     sleeps.clear()
-    with pytest.raises(ValueError, match=rf"content vazio.*após {LLM_MAX_ATTEMPTS} tentativas") as blank:
-        chat_complete("Classify.", model="m")
-    assert hidden not in str(blank.value)
-    assert "DSAT" not in str(blank.value)
+    blank = chat_complete("Classify.", model="m")
+    assert blank == "sem sinal"
+    assert blank.refusal_fallback is True
+    assert blank.raw_response == ""
+    assert hidden not in blank
+    assert hidden not in blank.raw_response
+    assert "DSAT" not in blank.raw_response
     assert empty["calls"] == LLM_MAX_ATTEMPTS
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+
+
+def test_exhausted_429_still_raises_when_the_last_attempt_is_not_a_refusal(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            *[_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS - 1)],
+            _http_error(429, "Please try again in 1s."),
+        ],
+    )
+    with pytest.raises(RuntimeError, match=rf"LLM HTTP 429:.*após {LLM_MAX_ATTEMPTS} tentativas"):
+        chat_complete("Classify.", model="m")
+    assert seen["calls"] == LLM_MAX_ATTEMPTS
+    # A 429 da última tentativa não vira sem sinal e não dorme de novo.
     assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
 
 
@@ -614,6 +638,7 @@ def test_classify_votes_retries_one_inference_inside_chat_complete(monkeypatch):
     assert voted.votes == (Label.SAT, Label.DSAT, Label.DSAT)
     assert voted.label is Label.DSAT
     assert voted.decision == "majority"
+    assert voted.refusals == ()
     assert seen["calls"] == 5
     assert sleeps == [1.0, 1.0]
     bodies = _bodies(seen)
@@ -645,7 +670,92 @@ def test_injected_complete_is_not_wrapped_in_a_second_retry(monkeypatch):
     assert sleeps == []
 
 
-def test_refusal_leaves_a_checkpoint_and_resume_skips_finished_examples(
+def test_classify_votes_keeps_majority_when_one_inference_falls_back(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    sleeps: list[float] = []
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", sleeps.append)
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            *[_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)],
+            _ok_response("SAT"),
+            _ok_response("The label is SAT."),
+        ],
+    )
+    voted = classify_votes(
+        "List three colors.",
+        [],
+        dry_run=False,
+        model="dummy-model",
+        max_chars=100,
+        k=3,
+        temperature=0.4,
+    )
+    assert voted.votes == (Label.NO_SIGNAL, Label.SAT, Label.SAT)
+    assert voted.label is Label.SAT
+    assert voted.decision == "majority"
+    assert voted.refusals == (RefusalFallback(index=0, raw_response=_REFUSAL),)
+    assert seen["calls"] == LLM_MAX_ATTEMPTS + 2
+    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+
+
+def test_persistent_refusal_does_not_stop_the_seed(
+    tiny_path: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepinfra.com/v1/openai")
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", lambda _seconds: None)
+    output = tmp_path / "live.json"
+    args = [
+        "--data",
+        str(tiny_path),
+        "--shot",
+        "zero",
+        "--test-size",
+        "3",
+        "--per-class",
+        "1",
+        "--seed",
+        "0",
+        "--inferences",
+        "1",
+        "--live",
+        "--output",
+        str(output),
+    ]
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _ok_response("SAT"),
+            *[_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)],
+            _ok_response("DSAT"),
+        ],
+    )
+    assert main(args) == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert "kind" not in payload
+    assert seen["calls"] == 2 + LLM_MAX_ATTEMPTS
+    assert payload["official_result"] is False
+    assert isinstance(payload["metrics"]["macro_f1"], float)
+    assert payload["predictions"][0]["id"] == "r2"
+    assert payload["predictions"][0]["pred"] == "SAT"
+    assert "refusal_fallback" not in payload["predictions"][0]
+    refused = payload["predictions"][1]
+    assert refused["id"] == "r13"
+    assert refused["pred"] == "sem sinal"
+    assert refused["refusal_fallback"] is True
+    assert refused["refusal_responses"] == [{"index": 0, "text": _REFUSAL}]
+    assert payload["inference_votes"][1] == ["sem sinal"]
+    assert payload["predictions"][2]["pred"] == "DSAT"
+    blob = " ".join(payload["protocol_deviations"])
+    assert f"{REFUSAL_FALLBACK_PHRASE}: 1 inferência (r13[0])." in payload["protocol_deviations"]
+    assert "r13[0]" in blob
+    assert "sk-test" not in output.read_text(encoding="utf-8")
+    assert "Recusa persistente" in payload["note"]
+
+
+def test_refusal_is_recorded_in_the_checkpoint_and_kept_on_resume(
     tiny_path: Path, tmp_path: Path, monkeypatch
 ):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -673,64 +783,70 @@ def test_refusal_leaves_a_checkpoint_and_resume_skips_finished_examples(
     ]
     first = _install_urlopen(
         monkeypatch,
-        [_ok_response("SAT"), *[_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)]],
+        [
+            _ok_response("SAT"),
+            *[_ok_response(_REFUSAL) for _ in range(LLM_MAX_ATTEMPTS)],
+            *[_http_error(429, "Please try again in 1s.") for _ in range(LLM_MAX_ATTEMPTS)],
+        ],
     )
     assert main(args) == 1
     saved = json.loads(output.read_text(encoding="utf-8"))
     assert saved["kind"] == "llm_checkpoint"
+    assert saved["version"] == 2
+    assert saved["fingerprint"]["version"] == 1
     assert saved["official_result"] is False
-    assert saved["next_index"] == 1
-    assert saved["n_completed"] == 1
+    assert saved["next_index"] == 2
+    assert saved["n_completed"] == 2
     assert saved["completed"][0]["pred"] == "SAT"
     assert saved["completed"][0]["votes"] == ["SAT"]
+    assert "refusal_fallback" not in saved["completed"][0]
+    refused = saved["completed"][1]
+    assert refused["id"] == "r13"
+    assert refused["pred"] == "sem sinal"
+    assert refused["votes"] == ["sem sinal"]
+    assert refused["refusal_fallback"] is True
+    assert refused["refusal_responses"] == [{"index": 0, "text": _REFUSAL}]
     assert "sk-test" not in output.read_text(encoding="utf-8")
-    assert _REFUSAL not in output.read_text(encoding="utf-8")
-    assert first["calls"] == 1 + LLM_MAX_ATTEMPTS
-    assert sleeps == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
-    refusal_bodies = _bodies(first)[1:]
+    assert first["calls"] == 1 + (2 * LLM_MAX_ATTEMPTS)
+    assert sleeps[:7] == [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0]
+    refusal_bodies = _bodies(first)[1:1 + LLM_MAX_ATTEMPTS]
     assert len(refusal_bodies) == LLM_MAX_ATTEMPTS
     assert all(body == refusal_bodies[0] for body in refusal_bodies)
     assert refusal_bodies[0]["temperature"] == 0.7
-    n_expected = saved["n_expected"]
-    assert isinstance(n_expected, int) and n_expected > 1
 
-    second = _install_urlopen(
-        monkeypatch,
-        [_ok_response("DSAT") for _ in range(n_expected - 1)],
-    )
+    second = _install_urlopen(monkeypatch, [_ok_response("DSAT")])
     sleeps.clear()
     assert main(args) == 0
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert "kind" not in payload
-    assert payload["resume"]["n_reused"] == 1
+    assert payload["resume"]["n_reused"] == 2
     assert payload["official_result"] is False
     assert payload["dry_run"] is False
     assert payload["predictions"][0]["pred"] == "SAT"
-    assert payload["predictions"][1]["pred"] == "DSAT"
-    assert [row["pred"] for row in payload["predictions"][1:]] == ["DSAT"] * (n_expected - 1)
-    assert second["calls"] == n_expected - 1
+    assert payload["predictions"][1]["pred"] == "sem sinal"
+    assert payload["predictions"][1]["refusal_fallback"] is True
+    assert payload["predictions"][1]["refusal_responses"] == [{"index": 0, "text": _REFUSAL}]
+    assert payload["predictions"][2]["pred"] == "DSAT"
+    assert "refusal_fallback" not in payload["predictions"][2]
+    assert second["calls"] == 1
     assert sleeps == []
     blob = " ".join(payload["protocol_deviations"])
+    assert f"{REFUSAL_FALLBACK_PHRASE}: 1 inferência (r13[0])." in payload["protocol_deviations"]
     assert "checkpoint" not in blob
-    assert "recusa" not in blob
-    assert "content" not in blob
-    closed, closed_deviations = llm_official_result(
-        dry_run=False,
-        model_id=PROTOCOL_LLM_MODEL_ID,
-        base_url=PROTOCOL_LLM_BASE_URL,
-        shot="zero",
-        few_shot_k=0,
-        inferences=3,
-        test_subsample=1000,
-        test_fraction=0.12,
-        per_class=5000,
-        strict_per_class=True,
-        seed=0,
-        fallback_base_url=DEFAULT_BASE_URL,
-    )
-    assert closed is True
-    assert closed_deviations == []
+    assert "content vazio" not in blob
     assert "sk-test" not in output.read_text(encoding="utf-8")
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("retomada do JSON final refez inferência")
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    assert main(args) == 0
+    again = json.loads(output.read_text(encoding="utf-8"))
+    assert again["resume"]["n_reused"] == 3
+    assert again["predictions"] == payload["predictions"]
+    assert again["protocol_deviations"] == payload["protocol_deviations"]
+    assert again["official_result"] is False
+    assert again["inference_votes"] == payload["inference_votes"]
 
 
 def test_llm_dry_run_entrypoint(tiny_path: Path, tmp_path: Path, monkeypatch):
@@ -965,6 +1081,8 @@ def test_official_result_accepts_deepinfra_and_rejects_groq():
     assert "https://api.deepinfra.com/v1/openai" in OFFICIAL_RESULT_POLICY
     assert "revogada" in OFFICIAL_RESULT_POLICY
     assert REVOKED_LLM_BASE_URL in OFFICIAL_RESULT_POLICY
+    assert REFUSAL_FALLBACK_PHRASE in OFFICIAL_RESULT_POLICY
+    assert "official_result fica false" in OFFICIAL_RESULT_POLICY
 
     official, deviations = _closed_llm_call()
     assert official is True
@@ -1183,6 +1301,154 @@ def _install_offline_votes(monkeypatch) -> None:
         raise AssertionError("a corrida de teste chamou a rede")
 
     monkeypatch.setattr("urllib.request.urlopen", _boom)
+
+
+def test_apply_refusal_deviation_follows_the_official_result_policy():
+    clean, clean_deviations = apply_refusal_deviation(True, [], [])
+    assert clean is True
+    assert clean_deviations == []
+    fallen, fallen_deviations = apply_refusal_deviation(True, [], [("r13", (0,))])
+    assert fallen is False
+    assert fallen_deviations == [f"{REFUSAL_FALLBACK_PHRASE}: 1 inferência (r13[0])."]
+    mixed, mixed_deviations = apply_refusal_deviation(
+        False,
+        ["dry_run: a chamada não foi à rede."],
+        [("r13", (0, 2)), ("r40", (1,))],
+    )
+    assert mixed is False
+    assert mixed_deviations[0].startswith("dry_run")
+    assert mixed_deviations[-1] == (
+        f"{REFUSAL_FALLBACK_PHRASE}: 3 inferências (r13[0, 2], r40[1])."
+    )
+
+
+def test_recovered_refusal_is_not_a_protocol_deviation(
+    tiny_path: Path, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepinfra.com/v1/openai")
+    monkeypatch.setattr("user_feedback_analysis.llm.client.time.sleep", lambda _seconds: None)
+    output = tmp_path / "recovered.json"
+    seen = _install_urlopen(
+        monkeypatch,
+        [
+            _ok_response(_REFUSAL),
+            _ok_response("SAT"),
+            _ok_response(_REFUSAL),
+            _ok_response("DSAT"),
+            _ok_response(_REFUSAL),
+            _ok_response("sem sinal"),
+        ],
+    )
+    assert main(
+        [
+            "--data",
+            str(tiny_path),
+            "--shot",
+            "zero",
+            "--test-size",
+            "3",
+            "--per-class",
+            "1",
+            "--seed",
+            "0",
+            "--inferences",
+            "1",
+            "--live",
+            "--output",
+            str(output),
+        ]
+    ) == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert seen["calls"] == 6
+    assert all("refusal_fallback" not in row for row in payload["predictions"])
+    assert all(REFUSAL_FALLBACK_PHRASE not in item for item in payload["protocol_deviations"])
+    assert payload["official_result"] is False
+
+
+def test_closed_call_with_a_refusal_stays_in_the_report_and_is_not_official(
+    tmp_path: Path, monkeypatch
+):
+    corpus = tmp_path / "protocol.jsonl"
+    _write_protocol_corpus(corpus)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-super-secret")
+    monkeypatch.setenv("LLM_MODEL", "openai/gpt-oss-20b")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepinfra.com/v1/openai")
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("a corrida de teste chamou a rede")
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    state = {"n": 0}
+
+    def _votes(*_args, **_kwargs):
+        state["n"] += 1
+        if state["n"] == 1:
+            return VoteResult(
+                label=Label.SAT,
+                votes=(Label.NO_SIGNAL, Label.SAT, Label.SAT),
+                decision="majority",
+                refusals=(RefusalFallback(index=0, raw_response=_REFUSAL),),
+            )
+        return VoteResult(
+            label=Label.SAT,
+            votes=(Label.SAT, Label.SAT, Label.SAT),
+            decision="majority",
+        )
+
+    monkeypatch.setattr("user_feedback_analysis.llm.run.classify_votes", _votes)
+    output = tmp_path / "few.json"
+    args = [
+        "--data",
+        str(corpus),
+        "--shot",
+        "few",
+        "--k",
+        "3",
+        "--test-fraction",
+        "0.12",
+        "--test-subsample",
+        "1000",
+        "--per-class",
+        "5000",
+        "--strict-per-class",
+        "--inferences",
+        "3",
+        "--seed",
+        "1",
+        "--live",
+        "--output",
+        str(output),
+    ]
+    assert main(args) == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert state["n"] == 1000
+    assert payload["official_result"] is False
+    assert isinstance(payload["metrics"]["macro_f1"], float)
+    assert len(payload["predictions"]) == 1000
+    first = payload["predictions"][0]
+    assert first["refusal_fallback"] is True
+    assert first["refusal_responses"] == [{"index": 0, "text": _REFUSAL}]
+    assert first["pred"] == "SAT"
+    assert "refusal_fallback" not in payload["predictions"][1]
+    assert payload["protocol_deviations"] == [
+        f"{REFUSAL_FALLBACK_PHRASE}: 1 inferência ({first['id']}[0])."
+    ]
+    assert "official_result false" in payload["note"]
+    assert "Recusa persistente" in payload["note"]
+    assert "sk-super-secret" not in output.read_text(encoding="utf-8")
+
+    def _no_more(*_args, **_kwargs):
+        raise AssertionError("retomada refez inferência")
+
+    monkeypatch.setattr("user_feedback_analysis.llm.run.classify_votes", _no_more)
+    assert main(args) == 0
+    again = json.loads(output.read_text(encoding="utf-8"))
+    assert again["resume"]["n_reused"] == 1000
+    assert again["official_result"] is False
+    assert again["predictions"] == payload["predictions"]
+    assert again["protocol_deviations"] == payload["protocol_deviations"]
 
 
 def test_runner_marks_deepinfra_official_and_groq_revoked(
