@@ -2,11 +2,12 @@
 
 Trabalho prático de PLN (INF01100, UFRGS 2026/2, Grupo 16: João Vítor Baggio e Nikolas Cunha Chemale).
 
-O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800, 0.4754 e 0.4836. Transformer e LLM ainda não têm número. A nota está em [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md).
+O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800, 0.4754 e 0.4836. A nota está em [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b`, zero-shot e few-shot, tem macro F1 medido em 2026-11-06 na subamostra de 1000, sementes 0, 1 e 2. Zero-shot: 0.7098, 0.6834 e 0.7357. Few-shot: 0.6869, 0.7032 e 0.7370. A nota está em [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md). O Transformer ainda não tem número.
 
 - [Problema, escopo e decisões](docs/definicao.md)
 - [Protocolo experimental](docs/protocolo-experimental.md)
 - [Baseline Cardiff, 2026-11-02](docs/cardiff-baseline-2026-11-02.md)
+- [LLM gpt-oss-20b, subamostra 1000, 2026-11-06](docs/llm-gptoss20b-sub1k-2026-11-06.md)
 - [Função de loss](docs/funcao-de-loss.md)
 - [Referências](docs/referencias.md)
 
@@ -194,6 +195,8 @@ for seed in 0 1 2; do
 done
 ```
 
+A medição de 2026-11-06 seguiu essa regra, zero-shot e few-shot, sementes 0, 1 e 2. Macro F1 zero-shot: 0.7098, 0.6834 e 0.7357. Few-shot: 0.6869, 0.7032 e 0.7370. As seis corridas gravaram `official_result: true` e `protocol_deviations` vazio. Tabela, matrizes e a linha do tempo: [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md).
+
 O mesmo laço está em `scripts/run-llm-gptoss20b-sub1k.sh`. Sem argumento, usa `--hf`. Com um JSONL, troca para `--data`. O script recusa outro modelo e outra base, inclusive a base antiga da Groq, e não imprime a chave. `runs/` fica fora do git.
 
 O cliente manda `User-Agent: Mozilla/5.0 (compatible; UserFeedbackAnalysis/llm-client)`. Esse cabeçalho foi posto porque, na Groq, a Cloudflare respondia HTTP 403 com `error code: 1010` ao urllib, e a corrida no Fedora não chegava na API. A chamada à DeepInfra leva o mesmo cabeçalho. HTTP 429, HTTP 5xx, falha transitória de rede e resposta sem rótulo único repetem no máximo 8 vezes, na mesma fila. A espera de 429 usa `try again in Xs` (ou `ms`) e o header `Retry-After` quando vêm no erro; senão, e também quando o `content` vem vazio ou sem um SAT/DSAT/sem sinal único, dobra a partir de 1s. O piso é 0,05s e o teto é 120s, então uma pista de horas (cota diária) não trava a noite: esgotadas as tentativas de rede, segue o `RuntimeError`. Esgotada a resposta sem rótulo (recusa ou `content` vazio), a inferência conta como `sem sinal` e a semente segue; o último texto fica na predição (`refusal_fallback`) e o caso entra em `protocol_deviations`. Isso é desvio: `official_result` fica `false` e a corrida continua no relatório. Decisão de João em 2026-11-06. 401, 403, URL inválida e JSON sem `choices` falham na hora. O gpt-oss na DeepInfra às vezes põe a cadeia de pensamento em `reasoning_content` e o rótulo em `content`. O cliente lê só `content`. Se `content` vem vazio, a chamada repete; o outro campo não vira rótulo. O prompt e a temperatura não mudam entre as tentativas.
@@ -248,4 +251,4 @@ done
 
 No baseline, no Transformer e no harness solto, `official_result` sai `false`. O arquivo descreve a corrida local e inclui a lista de predições. Essa lista fica em `runs/` e fora do git. A nota [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md) copia as métricas do baseline Cardiff de 2026-11-02, com semente, fração de teste, `per_class` 5000 e checkpoint. O flag dessa nota continua falso: a nota não é o registro do artigo. A revisão do dataset no Hub não entrou nesse resumo.
 
-No LLM, a decisão de 2026-11-03, emendada em 2026-11-04, aceita um arranjo como avaliação do braço. `official_result` sai `true` só na chamada real descrita na seção LLM, sem recusa persistente. Dry-run, a base da Groq, recusa persistente contada como sem sinal e qualquer outro desvio ficam `false`, com `protocol_deviations`. O JSON continua fora do git.
+No LLM, a decisão de 2026-11-03, emendada em 2026-11-04, aceita um arranjo como avaliação do braço. `official_result` sai `true` só na chamada real descrita na seção LLM, sem recusa persistente. Dry-run, a base da Groq, recusa persistente contada como sem sinal e qualquer outro desvio ficam `false`, com `protocol_deviations`. O JSON continua fora do git. A nota [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md) copia as métricas das seis corridas de 2026-11-06. Nas seis, `official_result` está `true` e `protocol_deviations` está vazio. A nota não é o registro do artigo.
