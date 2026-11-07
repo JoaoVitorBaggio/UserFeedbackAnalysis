@@ -2,7 +2,7 @@
 
 **Disciplina:** Processamento de Linguagem Natural (INF01100), UFRGS, 2026/2.  
 **Grupo 16:** João Vítor Baggio e Nikolas Cunha Chemale.  
-**Estado:** blueprint (out/2026). O baseline Cardiff tem macro F1 medido em 2026-11-02; ver [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). Transformer e LLM ainda não têm número.
+**Estado:** blueprint (out/2026). O baseline Cardiff tem macro F1 medido em 2026-11-02; ver [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b` tem macro F1 medido em 2026-11-06; ver [llm-gptoss20b-sub1k-2026-11-06.md](llm-gptoss20b-sub1k-2026-11-06.md). O Transformer ainda não tem número.
 
 ## Problema
 
@@ -77,7 +77,7 @@ O card declara o corpus em inglês. O caminho mínimo não traduz.
 | Primeiro F1 | 4/11/2026, meta interna do grupo |
 | Slides | 24/11/2026 |
 
-Call e chat de 31/10/2026 (João Vítor Baggio) fecharam teste, sementes, baseline, LLM, agregação, encoder e GPU. Em 2026-11-03 João revogou o modelo Llama 3.1 8B Instruct, fechou `openai/gpt-oss-20b`, a subamostra de 1000 turnos para os braços LLM e o k=3 do few-shot. Em 2026-11-04 João trocou o backend dessas corridas para a DeepInfra e revogou a base da Groq: a cota gratuita diária tinha esgotado, a rota OpenRouter para a Groq foi abandonada, e os créditos pré-pagos da DeepInfra estão cobertos. O id do modelo e os demais botões não mudam. Em 2026-11-06 João decidiu que recusa ou `content` vazio, esgotadas as tentativas daquela inferência, conta como sem sinal e entra em `protocol_deviations`; a semente não para, e `official_result` fica falso. HTTP 429, HTTP 5xx e falha de rede continuam erro. O macro F1 do baseline Cardiff (2026-11-02) está na [nota](cardiff-baseline-2026-11-02.md). Transformer e LLM ainda não têm número.
+Call e chat de 31/10/2026 (João Vítor Baggio) fecharam teste, sementes, baseline, LLM, agregação, encoder e GPU. Em 2026-11-03 João revogou o modelo Llama 3.1 8B Instruct, fechou `openai/gpt-oss-20b`, a subamostra de 1000 turnos para os braços LLM e o k=3 do few-shot. Em 2026-11-04 João trocou o backend dessas corridas para a DeepInfra e revogou a base da Groq: a cota gratuita diária tinha esgotado, a rota OpenRouter para a Groq foi abandonada, e os créditos pré-pagos da DeepInfra estão cobertos. O id do modelo e os demais botões não mudam. Em 2026-11-06 João decidiu que recusa ou `content` vazio, esgotadas as tentativas daquela inferência, conta como sem sinal e entra em `protocol_deviations`; a semente não para, e `official_result` fica falso. HTTP 429, HTTP 5xx e falha de rede continuam erro. O macro F1 do baseline Cardiff (2026-11-02) está na [nota](cardiff-baseline-2026-11-02.md). O macro F1 do LLM (2026-11-06) está na [nota](llm-gptoss20b-sub1k-2026-11-06.md). O Transformer ainda não tem número.
 
 ## Fora de escopo
 
