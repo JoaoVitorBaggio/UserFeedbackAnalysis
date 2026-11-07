@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -30,11 +32,48 @@ def read_label_file(path: Path) -> list[str]:
 
 
 def write_json(payload: dict[str, object], path: Path) -> None:
+    """Grava o JSON com replace atômico no mesmo diretório.
+
+    O destino só muda de nome depois do conteúdo estar no disco. Uma
+    queda no meio deixa o arquivo anterior inteiro; não fica JSON
+    pela metade no caminho final.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
     )
+    tmp_path = Path(tmp_name)
+    owned = fd
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            owned = -1
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        _fsync_dir(path.parent)
+    except Exception:
+        if owned >= 0:
+            os.close(owned)
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _fsync_dir(directory: Path) -> None:
+    """O replace já valeu. Falha aqui não desfaz o arquivo novo."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def prediction_rows(
@@ -58,7 +97,13 @@ def build_run_record(
     predictions: list[dict[str, str]],
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    """Registro de uma corrida. ``official_result`` fica falso: os docs não guardam métrica."""
+    """Registro de uma corrida.
+
+    ``official_result`` sai falso. O arquivo não é o registro do artigo.
+    O runner de LLM pode sobrescrever o campo quando a chamada casa com
+    a decisão de 2026-11-03, emendada em 2026-11-04 (backend DeepInfra).
+    Cardiff e Transformer não fazem isso.
+    """
     payload: dict[str, object] = {
         "arm": arm,
         "official_result": False,
