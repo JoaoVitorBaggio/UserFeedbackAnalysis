@@ -389,6 +389,11 @@ def train_transformer(
             "val_macro_recall": report.macro_recall,
         }
         history.append(row)
+        print(
+            f"época {epoch}/{train_config.epochs} "
+            f"train_loss={train_loss:.4f} val_macro_f1={report.macro_f1:.4f}",
+            flush=True,
+        )
         if report.macro_f1 > best_f1:
             best_f1 = report.macro_f1
             best_epoch = epoch

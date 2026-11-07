@@ -8,6 +8,7 @@ from user_feedback_analysis.labels import LABELS, Label
 from user_feedback_analysis.records import Example
 from user_feedback_analysis.transformer.dataset import LABEL_TO_ID, SatisfactionDataset
 from user_feedback_analysis.transformer.loss import LOSS_NAME, N_CLASSES, build_loss
+from user_feedback_analysis.transformer.export import export_for_hub, load_exported
 from user_feedback_analysis.transformer.model import DEFAULT_ENCODER, SatisfactionModel
 from user_feedback_analysis.transformer.run import main
 from user_feedback_analysis.transformer.train import TrainConfig, predict, train_transformer
@@ -253,3 +254,79 @@ def test_run_requires_val_size(tiny_path: Path, capsys):
     )
     assert code == 1
     assert "val-size" in capsys.readouterr().err
+
+
+def test_export_reload_keeps_predictions(tmp_path: Path):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+    pytest.importorskip("safetensors")
+    tokenizer, config = _tiny_bert(tmp_path)
+    train = [
+        _example("tr0", "thanks perfect", Label.SAT),
+        _example("tr1", "this is wrong", Label.DSAT),
+        _example("tr2", "write a poem", Label.NO_SIGNAL),
+        _example("tr3", "great answer", Label.SAT),
+    ]
+    val = [
+        _example("va0", "thanks work", Label.SAT),
+        _example("va1", "failed badly", Label.DSAT),
+        _example("va2", "list the answer", Label.NO_SIGNAL),
+    ]
+    holdout = [
+        _example("te0", "perfect work", Label.SAT),
+        _example("te1", "broken fix", Label.DSAT),
+        _example("te2", "translate this", Label.NO_SIGNAL),
+    ]
+    result = train_transformer(
+        train,
+        val,
+        encoder_name="tiny-test",
+        seed=0,
+        config=TrainConfig(
+            epochs=1,
+            batch_size=2,
+            max_length=16,
+            device="cpu",
+            fp16=False,
+            lr=1e-3,
+            patience=1,
+        ),
+        tokenizer=tokenizer,
+        model_config=config,
+    )
+    checkpoint = tmp_path / "best.pt"
+    torch.save(result.model.state_dict(), checkpoint)
+    before = predict(
+        result.model,
+        result.tokenizer,
+        holdout,
+        batch_size=2,
+        max_length=16,
+        device="cpu",
+    )
+    dest = tmp_path / "export"
+    export_for_hub(
+        checkpoint,
+        dest,
+        encoder_name="tiny-test",
+        config=config,
+        tokenizer=tokenizer,
+        run_record={
+            "official_result": False,
+            "metrics": {"macro_f1": 0.5, "n": 3, "per_class": {}},
+            "training": {"best_epoch": 1, "best_val_macro_f1": 0.4},
+            "split": {"seed": 0},
+        },
+    )
+    assert (dest / "classifier_head.safetensors").is_file()
+    assert (dest / "label_map.json").is_file()
+    restored, restored_tok = load_exported(dest)
+    after = predict(
+        restored,
+        restored_tok,
+        holdout,
+        batch_size=2,
+        max_length=16,
+        device="cpu",
+    )
+    assert after == before

@@ -231,21 +231,24 @@ python -m user_feedback_analysis.transformer.run \
   --output runs/transformer-smoke.json
 ```
 
-Corrida de relatório, uma invocação por semente: `--per-class 5000` e `--strict-per-class`, fechados em 2026-11-01. `--val-size 3000` é proposta de trabalho (o protocolo deixa o tamanho da validação a definir). Conferir `per_class_pool_before_sample` no JSON: a validação sai do pool antes da amostra balanceada.
+Corrida do protocolo, uma invocação por semente. `--val-size 15000`: a validação não é estratificada; 3000 conversas na distribuição real deixam SAT demais escasso para o early stopping. SAT User no corpus não chega a 10 mil depois do hold-out — sem `--strict-per-class`, o treino usa o pool inteiro dessa classe (~5100). `--per-class 10000` vale para DSAT e sem sinal. Conferir `per_class_pool_before_sample` no JSON.
 
 ```bash
 for seed in 0 1 2; do
   python -m user_feedback_analysis.transformer.run \
     --hf \
-    --test-fraction 0.12 --per-class 5000 --val-size 3000 --seed "$seed" \
-    --strict-per-class --device cuda \
+    --test-fraction 0.12 --per-class 10000 --val-size 15000 --seed "$seed" \
+    --device cuda \
+    --checkpoint-dir "runs/checkpoints/seed-${seed}" \
     --output "runs/transformer-seed-${seed}.json"
 done
 ```
 
+Checkpoints e model card: [nikname22/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/nikname22/ufa-wildfeedback-satisfaction-mbert) (pastas `seed-0`, `seed-1`, `seed-2`). Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`.
+
 `--encoder` troca o id; o usado entra no JSON. `--checkpoint-dir` grava o melhor `state_dict`. `--no-fp16` desliga AMP. Batch (padrão 16), `max_length` (padrão 128) e fp16 no CUDA são o limite da RTX 4060 8GB, não hiperparâmetro medido. Smoke local nessa placa, 1 época, batch 16, `max_length` 128, fp16: pico cerca de 3,4 GB alocados / 3,7 GB reservados. Se a placa recusar, baixe `--batch-size` ou `--max-length`, ou use `--grad-accum`.
 
-`official_result` sai `false`. As três seeds na base completa ficam para alinhar com o grupo depois do smoke de VRAM.
+`official_result` sai `false`. Copiar o macro F1 para o artigo pede registro do grupo.
 
 ## O que o JSON de uma corrida não é
 
