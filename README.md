@@ -244,7 +244,7 @@ for seed in 0 1 2; do
 done
 ```
 
-Checkpoints e model card: [nikname22/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/nikname22/ufa-wildfeedback-satisfaction-mbert) (pastas `seed-0`, `seed-1`, `seed-2`). Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`.
+Checkpoints e model card: [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert) (pastas `seed-0`, `seed-1`, `seed-2`). Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`.
 
 `--encoder` troca o id; o usado entra no JSON. `--checkpoint-dir` grava o melhor `state_dict`. `--no-fp16` desliga AMP. Batch (padrão 16), `max_length` (padrão 128) e fp16 no CUDA são o limite da RTX 4060 8GB, não hiperparâmetro medido. Smoke local nessa placa, 1 época, batch 16, `max_length` 128, fp16: pico cerca de 3,4 GB alocados / 3,7 GB reservados. Se a placa recusar, baixe `--batch-size` ou `--max-length`, ou use `--grad-accum`.
 
