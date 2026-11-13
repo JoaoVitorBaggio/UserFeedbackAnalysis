@@ -2,12 +2,13 @@
 
 Trabalho prático de PLN (INF01100, UFRGS 2026/2, Grupo 16: João Vítor Baggio e Nikolas Cunha Chemale).
 
-O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800, 0.4754 e 0.4836. A nota está em [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b`, zero-shot e few-shot, tem macro F1 medido em 2026-11-06 na subamostra de 1000, sementes 0, 1 e 2. Zero-shot: 0.7098, 0.6834 e 0.7357. Few-shot: 0.6869, 0.7032 e 0.7370. A nota está em [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md). O Transformer ainda não tem número.
+O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800, 0.4754 e 0.4836. A nota está em [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b`, zero-shot e few-shot, tem macro F1 medido em 2026-11-06 na subamostra de 1000, sementes 0, 1 e 2. Zero-shot: 0.7098, 0.6834 e 0.7357. Few-shot: 0.6869, 0.7032 e 0.7370. A nota está em [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md). O Transformer mBERT (`bert-base-multilingual-cased`) tem macro F1 medido em 2026-11-07 no teste completo, sementes 0, 1 e 2: 0.5844, 0.5414 e 0.5826. A nota está em [docs/transformer-mbert-5000-strict-2026-11-07.md](docs/transformer-mbert-5000-strict-2026-11-07.md). A corrida `--per-class 10000` sem strict é ablação.
 
 - [Problema, escopo e decisões](docs/definicao.md)
 - [Protocolo experimental](docs/protocolo-experimental.md)
 - [Baseline Cardiff, 2026-11-02](docs/cardiff-baseline-2026-11-02.md)
 - [LLM gpt-oss-20b, subamostra 1000, 2026-11-06](docs/llm-gptoss20b-sub1k-2026-11-06.md)
+- [Transformer mBERT, 5000 com strict, 2026-11-07](docs/transformer-mbert-5000-strict-2026-11-07.md)
 - [Função de loss](docs/funcao-de-loss.md)
 - [Referências](docs/referencias.md)
 
@@ -80,7 +81,7 @@ Filtro padrão: `Role == User`. É hipótese de trabalho, porque a pergunta é s
 Ordem da partição, a do protocolo:
 
 1. Teste na distribuição dos exemplos elegíveis, separado antes do treino balanceado. `--test-fraction 0.12` é o protocolo: estratificado pelas três classes, sem rebalancear o teste. Se `--test-size` e `--test-fraction` faltarem, a fração 0.12 entra sozinha. `--test-size` continua contagem inteira sem estratificar, para smoke e fixtures. Os dois flags são exclusivos. O JSON grava fração ou contagem, semente, `stratified`, a regra e as contagens realizadas por classe (`test_class_counts`, `test_class_targets`).
-2. Validação, se `--val-size` vier. O tamanho continua em aberto. É uma contagem inteira do que restou depois do teste, nunca do teste.
+2. Validação, se `--val-size` vier. No Transformer, o tamanho adotado em 2026-11-07 é 15000. A nota está em [docs/transformer-mbert-5000-strict-2026-11-07.md](docs/transformer-mbert-5000-strict-2026-11-07.md). É uma contagem inteira do que restou depois do teste, nunca do teste.
 3. Treino balanceado. A regra fechada em 2026-11-01 é `--per-class 5000` com `--strict-per-class`. Sem sinal é amostra aleatória do pool que sobrou, não o pool inteiro. O pool de SAT depois do teste fica em cerca de 5,3 mil; 10000 com strict não fecha. O default numérico do CLI continua 10000, e strict só entra se a linha passar a flag. Na corrida de relatório, a flag é o que vale.
 4. O protocolo usa as sementes 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. `--seed` é uma semente por invocação e entra no manifesto. Quem chama repete a corrida, uma invocação para cada inteiro.
 
@@ -231,20 +232,20 @@ python -m user_feedback_analysis.transformer.run \
   --output runs/transformer-smoke.json
 ```
 
-Corrida do protocolo, uma invocação por semente. `--val-size 15000`: a validação não é estratificada; 3000 conversas na distribuição real deixam SAT demais escasso para o early stopping. SAT User no corpus não chega a 10 mil depois do hold-out — sem `--strict-per-class`, o treino usa o pool inteiro dessa classe (~5100). `--per-class 10000` vale para DSAT e sem sinal. Conferir `per_class_pool_before_sample` no JSON.
+Corrida oficial do protocolo, uma invocação por semente. Nikolas retreinou em 2026-11-07 com `--per-class 5000 --strict-per-class --val-size 15000`. O teste é 12% estratificado e a avaliação é o teste completo. `--val-size 15000` foi adotado em 2026-11-07: a validação não é estratificada, e val 3000 deixaria cerca de 31 SAT para o early stopping. Conferir `per_class_pool_before_sample` no JSON. Macro F1 das sementes 0, 1 e 2: 0.5844, 0.5414 e 0.5826. A nota está em [docs/transformer-mbert-5000-strict-2026-11-07.md](docs/transformer-mbert-5000-strict-2026-11-07.md).
 
 ```bash
 for seed in 0 1 2; do
   python -m user_feedback_analysis.transformer.run \
     --hf \
-    --test-fraction 0.12 --per-class 10000 --val-size 15000 --seed "$seed" \
+    --test-fraction 0.12 --per-class 5000 --strict-per-class --val-size 15000 --seed "$seed" \
     --device cuda \
     --checkpoint-dir "runs/checkpoints/seed-${seed}" \
     --output "runs/transformer-seed-${seed}.json"
 done
 ```
 
-Checkpoints e model card: [nikname22/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/nikname22/ufa-wildfeedback-satisfaction-mbert) (pastas `seed-0`, `seed-1`, `seed-2`). Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`.
+A ablação usa a mesma `--val-size 15000` e troca o treino para `--per-class 10000`, sem `--strict-per-class`. SAT fica no pool inteiro (cerca de 5,1 mil). DSAT e sem sinal ficam em 10000. Não é o resultado oficial. Os pesos publicados em [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert) são dessa ablação. O card [nikname22/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/nikname22/ufa-wildfeedback-satisfaction-mbert) lista as pastas `seed-0`, `seed-1` e `seed-2`. Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`. Os JSON da medição estão no dataset privado [pln-ufrgs/ufa-transformer-protocol-5000-runs](https://huggingface.co/datasets/pln-ufrgs/ufa-transformer-protocol-5000-runs).
 
 `--encoder` troca o id; o usado entra no JSON. `--checkpoint-dir` grava o melhor `state_dict`. `--no-fp16` desliga AMP. Batch (padrão 16), `max_length` (padrão 128) e fp16 no CUDA são o limite da RTX 4060 8GB, não hiperparâmetro medido. Smoke local nessa placa, 1 época, batch 16, `max_length` 128, fp16: pico cerca de 3,4 GB alocados / 3,7 GB reservados. Se a placa recusar, baixe `--batch-size` ou `--max-length`, ou use `--grad-accum`.
 
@@ -252,6 +253,6 @@ Checkpoints e model card: [nikname22/ufa-wildfeedback-satisfaction-mbert](https:
 
 ## O que o JSON de uma corrida não é
 
-No baseline, no Transformer e no harness solto, `official_result` sai `false`. O arquivo descreve a corrida local e inclui a lista de predições. Essa lista fica em `runs/` e fora do git. A nota [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md) copia as métricas do baseline Cardiff de 2026-11-02, com semente, fração de teste, `per_class` 5000 e checkpoint. O flag dessa nota continua falso: a nota não é o registro do artigo. A revisão do dataset no Hub não entrou nesse resumo.
+No baseline, no Transformer e no harness solto, `official_result` sai `false`. O arquivo descreve a corrida local e inclui a lista de predições. Essa lista fica em `runs/` e fora do git. A nota [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md) copia as métricas do baseline Cardiff de 2026-11-02, com semente, fração de teste, `per_class` 5000 e checkpoint. O flag dessa nota continua falso: a nota não é o registro do artigo. A revisão do dataset no Hub não entrou nesse resumo. A nota [docs/transformer-mbert-5000-strict-2026-11-07.md](docs/transformer-mbert-5000-strict-2026-11-07.md) copia as métricas do mBERT de 2026-11-07. O resultado oficial é `--per-class 5000 --strict-per-class --val-size 15000`. A corrida `--per-class 10000` sem strict é ablação. O flag do JSON continua falso.
 
 No LLM, a decisão de 2026-11-03, emendada em 2026-11-04, aceita um arranjo como avaliação do braço. `official_result` sai `true` só na chamada real descrita na seção LLM, sem recusa persistente. Dry-run, a base da Groq, recusa persistente contada como sem sinal e qualquer outro desvio ficam `false`, com `protocol_deviations`. O JSON continua fora do git. A nota [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md) copia as métricas das seis corridas de 2026-11-06. Nas seis, `official_result` está `true` e `protocol_deviations` está vazio. A nota não é o registro do artigo.

@@ -2,7 +2,7 @@
 
 **Disciplina:** Processamento de Linguagem Natural (INF01100), UFRGS, 2026/2.  
 **Grupo 16:** João Vítor Baggio e Nikolas Cunha Chemale.  
-**Estado:** blueprint (out/2026). O baseline Cardiff tem macro F1 medido em 2026-11-02; ver [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b` tem macro F1 medido em 2026-11-06; ver [llm-gptoss20b-sub1k-2026-11-06.md](llm-gptoss20b-sub1k-2026-11-06.md). O Transformer ainda não tem número.
+**Estado:** blueprint (out/2026). O baseline Cardiff tem macro F1 medido em 2026-11-02; ver [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b` tem macro F1 medido em 2026-11-06; ver [llm-gptoss20b-sub1k-2026-11-06.md](llm-gptoss20b-sub1k-2026-11-06.md). O Transformer mBERT tem macro F1 medido em 2026-11-07, sementes 0, 1 e 2: 0.5844, 0.5414 e 0.5826; ver [transformer-mbert-5000-strict-2026-11-07.md](transformer-mbert-5000-strict-2026-11-07.md).
 
 ## Problema
 
@@ -70,14 +70,15 @@ O card declara o corpus em inglês. O caminho mínimo não traduz.
 | Avaliação do LLM | Subamostra estratificada de 1000 turnos do teste oficial de 12%. Cardiff e Transformer ficam no teste completo |
 | Few-shot | k=3 demonstrações do treino, fechado em 2026-11-03. Antes estava em aberto. Não é o K=3 das inferências |
 | Agregação do LLM | K=3 inferências por exemplo; voto majoritário (moda). Temperatura 0 não é exigida. Sem moda única, o código usa a primeira inferência empatada (`first_inference`) |
-| Encoder do Transformer | BERT-base multilíngue ou E5-base. Os dois são aceitáveis |
+| Encoder do Transformer | BERT-base multilíngue ou E5-base. Os dois são aceitáveis. A corrida de 2026-11-07 usou `bert-base-multilingual-cased` |
+| Validação do Transformer | `--val-size 15000`, decidido em 2026-11-07. A validação sai do lado de treino, depois do teste, e não é estratificada. Val 3000 deixaria cerca de 31 SAT. A corrida `--per-class 10000` sem strict é ablação, não o resultado oficial |
 | GPU do Transformer | RTX 4060 8GB. O loop de treino continua com Nikolas Chemale |
 | Harness inicial | João Vítor Baggio |
 | Fine-tuning | Nikolas Chemale, só o braço núcleo |
 | Primeiro F1 | 4/11/2026, meta interna do grupo |
 | Slides | 24/11/2026 |
 
-Call e chat de 31/10/2026 (João Vítor Baggio) fecharam teste, sementes, baseline, LLM, agregação, encoder e GPU. Em 2026-11-03 João revogou o modelo Llama 3.1 8B Instruct, fechou `openai/gpt-oss-20b`, a subamostra de 1000 turnos para os braços LLM e o k=3 do few-shot. Em 2026-11-04 João trocou o backend dessas corridas para a DeepInfra e revogou a base da Groq: a cota gratuita diária tinha esgotado, a rota OpenRouter para a Groq foi abandonada, e os créditos pré-pagos da DeepInfra estão cobertos. O id do modelo e os demais botões não mudam. Em 2026-11-06 João decidiu que recusa ou `content` vazio, esgotadas as tentativas daquela inferência, conta como sem sinal e entra em `protocol_deviations`; a semente não para, e `official_result` fica falso. HTTP 429, HTTP 5xx e falha de rede continuam erro. O macro F1 do baseline Cardiff (2026-11-02) está na [nota](cardiff-baseline-2026-11-02.md). O macro F1 do LLM (2026-11-06) está na [nota](llm-gptoss20b-sub1k-2026-11-06.md). O Transformer ainda não tem número.
+Call e chat de 31/10/2026 (João Vítor Baggio) fecharam teste, sementes, baseline, LLM, agregação, encoder e GPU. Em 2026-11-03 João revogou o modelo Llama 3.1 8B Instruct, fechou `openai/gpt-oss-20b`, a subamostra de 1000 turnos para os braços LLM e o k=3 do few-shot. Em 2026-11-04 João trocou o backend dessas corridas para a DeepInfra e revogou a base da Groq: a cota gratuita diária tinha esgotado, a rota OpenRouter para a Groq foi abandonada, e os créditos pré-pagos da DeepInfra estão cobertos. O id do modelo e os demais botões não mudam. Em 2026-11-06 João decidiu que recusa ou `content` vazio, esgotadas as tentativas daquela inferência, conta como sem sinal e entra em `protocol_deviations`; a semente não para, e `official_result` fica falso. HTTP 429, HTTP 5xx e falha de rede continuam erro. O macro F1 do baseline Cardiff (2026-11-02) está na [nota](cardiff-baseline-2026-11-02.md). O macro F1 do LLM (2026-11-06) está na [nota](llm-gptoss20b-sub1k-2026-11-06.md). O macro F1 do Transformer mBERT (2026-11-07) está na [nota](transformer-mbert-5000-strict-2026-11-07.md): 0.5844, 0.5414 e 0.5826, no protocolo `--per-class 5000 --strict-per-class --val-size 15000`. A corrida `--per-class 10000` sem strict é ablação.
 
 ## Fora de escopo
 
@@ -89,7 +90,6 @@ Chatbot de produção. Alinhar um modelo com pares de preferência — o artigo 
 2. O artigo descreve a classificação SAT/DSAT feita por GPT-4. Se for o que está neste arquivo, rotular à mão cerca de 200 exemplos e medir a concordância com o rótulo automático. Essa checagem não foi feita.
 3. Os dois booleanos verdadeiros no mesmo turno (precedência ou descarte). Não há regra fechada.
 4. Unidade do split: conversa ou turno. A preferência de trabalho é não colocar turnos da mesma conversa em treino e teste, se houver chave de conversa. Não foi decidido. O código já cobre as duas unidades; em conversa, estratifica pela maioria e não corta o grupo.
-5. Tamanho da validação, tirada do lado de treino, depois do teste. O teste oficial não entra em early stopping.
-6. Como resumir os três macro F1, um por semente. Cada semente entra no registro. Média ou outro agregado não foi fechado. O k do few-shot deixou de estar em aberto em 2026-11-03: ficou em 3.
+5. Como resumir os três macro F1, um por semente. Cada semente entra no registro. Média ou outro agregado não foi fechado. O k do few-shot deixou de estar em aberto em 2026-11-03: ficou em 3. O tamanho da validação do Transformer deixou de estar em aberto em 2026-11-07: ficou em `--val-size 15000`.
 
 As três sementes do protocolo são 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. Cada semente entra no manifesto quando a amostra for tirada.
