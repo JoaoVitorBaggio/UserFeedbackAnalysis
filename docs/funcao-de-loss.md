@@ -1,6 +1,6 @@
 # Função de loss
 
-Nada disto foi treinado. Não há valor de loss.
+O fine-tune de 2026-11-07 usou a cross-entropy abaixo. Esta nota não traz valor de loss. O macro F1 dessa corrida está em [transformer-mbert-5000-strict-2026-11-07.md](transformer-mbert-5000-strict-2026-11-07.md).
 
 A loss abaixo é a do Transformer fine-tunado (braço núcleo, Nikolas Chemale). O baseline não treina neste corpus. O LLM zero-shot / few-shot não recebe gradiente aqui. O espaço de rótulo, esse sim, é o mesmo na avaliação dos três braços.
 

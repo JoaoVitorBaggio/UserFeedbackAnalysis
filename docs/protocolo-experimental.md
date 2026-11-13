@@ -1,6 +1,6 @@
 # Protocolo experimental
 
-O baseline Cardiff foi medido em 2026-11-02. O LLM zero-shot e o few-shot foram medidos em 2026-11-06, na subamostra de 1000. O Transformer não. Onde faltar número, o texto diz **a definir**. Estimativas de mistura e de tamanho de treino estão na [definição](definicao.md). A contagem elegível e o macro F1 do baseline estão na [nota do baseline](cardiff-baseline-2026-11-02.md). O macro F1 do LLM está na [nota do LLM](llm-gptoss20b-sub1k-2026-11-06.md).
+O baseline Cardiff foi medido em 2026-11-02. O LLM zero-shot e o few-shot foram medidos em 2026-11-06, na subamostra de 1000. O Transformer mBERT foi medido em 2026-11-07, no teste completo. Onde faltar número, o texto diz **a definir**. Estimativas de mistura e de tamanho de treino estão na [definição](definicao.md). A contagem elegível e o macro F1 do baseline estão na [nota do baseline](cardiff-baseline-2026-11-02.md). O macro F1 do LLM está na [nota do LLM](llm-gptoss20b-sub1k-2026-11-06.md). O macro F1 do Transformer está na [nota do Transformer](transformer-mbert-5000-strict-2026-11-07.md).
 
 ## Experimento mínimo
 
@@ -23,13 +23,15 @@ Quatro corridas, nesta ordem, fechada na call de 31/10/2026. O enquadramento de 
 
 João Vítor Baggio também é dono do harness inicial, que avalia as quatro corridas.
 
-Checkpoints fechados em 31/10/2026. O baseline tem métrica medida em [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b` tem métrica medida em [llm-gptoss20b-sub1k-2026-11-06.md](llm-gptoss20b-sub1k-2026-11-06.md). O encoder do Transformer abaixo não é resultado.
+Checkpoints fechados em 31/10/2026. O baseline tem métrica medida em [cardiff-baseline-2026-11-02.md](cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b` tem métrica medida em [llm-gptoss20b-sub1k-2026-11-06.md](llm-gptoss20b-sub1k-2026-11-06.md). O Transformer mBERT tem métrica medida em [transformer-mbert-5000-strict-2026-11-07.md](transformer-mbert-5000-strict-2026-11-07.md).
 
 **Baseline.** Checkpoint principal: `cardiffnlp/twitter-roberta-base-sentiment-latest`. O harness projeta a saída para `{SAT, DSAT, sem sinal}` com o mapa positivo → SAT, negativo → DSAT, neutro → sem sinal. O card é de sentimento no Twitter; o corpus é feedback sobre resposta de assistente. Esse descompasso de domínio é intencional e faz parte da pergunta de pesquisa. Alternativa de três classes, se a corrida principal pedir contraste: `j-hartmann/sentiment-roberta-large-english-3-classes` (negative, neutral, positive no card do Hub, consulta em 31/10/2026), com o mesmo mapa. Checkpoint sem neutro não entra: o mapa ficaria **a definir** e não há colapso para duas classes.
 
 Corrida de 2026-11-02, na máquina do João (Fedora). Checkpoint principal, sementes 0, 1 e 2, `--hf`, teste 12% estratificado, `--per-class 5000 --strict-per-class`. Essas flags são a regra fechada em 2026-11-01, não um recorte desta noite. CUDA não subiu (torch sem sm_61 para a GTX 1060); a inferência foi em CPU, batch 8. Macro F1: 0.4800 (semente 0), 0.4754 (semente 1), 0.4836 (semente 2). Precisão e recall macro e o F1 por classe estão na [nota](cardiff-baseline-2026-11-02.md). Não há média: o agregado das três sementes continua **a definir**.
 
 **Transformer.** Encoder: BERT-base multilíngue ou E5-base. Os dois são aceitáveis; o id usado na corrida entra no manifesto. O loop de treino é de Nikolas Chemale, na RTX 4060 8GB. A loss é a cross-entropy categórica de 3 classes.
+
+Corrida de 2026-11-07, de Nikolas Chemale. Encoder `bert-base-multilingual-cased`. Sementes 0, 1 e 2, teste 12% estratificado, avaliação no teste completo (cerca de 63 mil exemplos), `--per-class 5000 --strict-per-class --val-size 15000`. `--val-size 15000` é o tamanho de validação adotado para o Transformer, decidido em 2026-11-07. A validação sai do lado de treino, depois do teste, e não é estratificada. Val 3000 deixaria cerca de 31 SAT na validação, pouco para o early stopping. O teste oficial não entra em early stopping. Macro F1: 0.5844 (semente 0), 0.5414 (semente 1), 0.5826 (semente 2). O F1 por classe, os pools e a média estão na [nota](transformer-mbert-5000-strict-2026-11-07.md). O protocolo deixa o agregado das três sementes em aberto; a média na nota é só apoio ao relatório. A corrida `--per-class 10000` sem `--strict-per-class`, com a mesma validação de 15000, é ablação: SAT fica no pool inteiro (cerca de 5,1 mil) e DSAT e sem sinal ficam em 10000. Não é o resultado oficial. Os pesos publicados em [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert) são dessa ablação.
 
 **LLM (zero-shot e few-shot).** O modelo continua `openai/gpt-oss-20b`, fechado em 2026-11-03 (America/Sao_Paulo) por João Vítor Baggio. Isso revoga o requisito de Llama 3.1 8B Instruct fechado na call de 31/10/2026. A conta Groq do João não lista mais Llama 3.1 8B; esse modelo não entra nestas corridas. O id vai em `LLM_MODEL` e no JSON.
 
@@ -73,7 +75,7 @@ Ordem fechada:
 1. Separar o teste: 12% dos exemplos elegíveis, estratificado pelas três classes. Disjunto do resto. A amostra de treino só começa depois dessa separação. O teste não é rebalanceado: a estratificação preserva a mistura de classes (distribuição real).
 2. Do que sobrou, montar o treino balanceado: 5000 SAT, 5000 DSAT, 5000 sem sinal, com `--strict-per-class`. João fechou esse tamanho em 2026-11-01. O pool de SAT depois do teste fica em cerca de 5,3 mil; 10000 com strict não fecha.
 3. Os 5000 **sem sinal** saem por amostra aleatória do pool sem sinal. Não é o pool inteiro. Não é subconjunto escolhido à mão, salvo especificação posterior. A estimativa antiga desse pool era ~87%; a contagem elegível de 2026-11-02 está na nota do baseline.
-4. Validação: **a definir**, tirada do lado de treino. O teste oficial não entra em early stopping.
+4. Validação do Transformer: `--val-size 15000`, decidido em 2026-11-07, tirada do lado de treino, depois do teste. Não é estratificada. Val 3000 deixaria cerca de 31 SAT na validação. O teste oficial não entra em early stopping. O realizado pode passar do pedido quando a unidade não corta a conversa; a [nota](transformer-mbert-5000-strict-2026-11-07.md) registra 15000, 15001 e 15002. Baseline e LLM desta medição não montam validação.
 5. Só nos braços LLM, e só quando `--test-subsample` vem: da lista de teste já fechada, tirar essa quantidade de turnos, estratificada, sem rebalancear. A decisão de 2026-11-03 usa 1000. Sem a flag, o código avalia o teste inteiro. Baseline e Transformer não têm essa flag.
 
 As três sementes do protocolo são 0, 1 e 2, nesta ordem, as mesmas nas quatro corridas. Cada semente redesenha a partição e, no Transformer, o treino. O hold-out de uma semente é o mesmo nos quatro braços. O LLM não troca esse hold-out: pontua uma subamostra dele. Cada semente entra no manifesto da corrida. O harness registra cada semente; agregar os três macro F1 não foi fechado.
@@ -84,7 +86,7 @@ O código implementa essa fração em `--test-fraction` (padrão 0.12 quando `--
 
 `--test-subsample` não repete essa fração. Só existe no runner de LLM e só roda depois do split. Os alvos saem dos maiores restos sobre as contagens do teste oficial; um `Random(seed)` próprio embaralha cada classe e fica com o prefixo do alvo. O tamanho pedido, o realizado e as contagens entram em `test_subsample` no JSON da corrida. O manifesto do split continua sendo o teste oficial inteiro.
 
-O treino do relatório é `--per-class 5000` com `--strict-per-class`. O default numérico de `--per-class` no CLI continua 10000, e strict continua desligado se a flag não vier. A flag da corrida é o que vale. Sem ela, o código não aplica a regra fechada em 2026-11-01.
+O treino do relatório é `--per-class 5000` com `--strict-per-class`. O default numérico de `--per-class` no CLI continua 10000, e strict continua desligado se a flag não vier. A flag da corrida é o que vale. Sem ela, o código não aplica a regra fechada em 2026-11-01. No Transformer, a corrida `--per-class 10000` sem strict, com `--val-size 15000`, é ablação. O resultado oficial é o de 5000 com strict. A [nota](transformer-mbert-5000-strict-2026-11-07.md) separa as duas.
 
 ## Métricas (hold-out)
 
@@ -94,7 +96,7 @@ O treino do relatório é `--per-class 5000` com `--strict-per-class`. O default
 | Precisão | No agregado do harness; por classe se útil |
 | Recall | No agregado do harness; por classe se útil |
 
-Acurácia não decide a comparação: o teste é desbalanceado. Sementes do protocolo: 0, 1 e 2, nesta ordem, compartilhadas pelos quatro braços. O marco de 4/11/2026 é a corrida do baseline. O macro F1 medido em 2026-11-02 está na [nota](cardiff-baseline-2026-11-02.md). O macro F1 do LLM medido em 2026-11-06 está na [nota do LLM](llm-gptoss20b-sub1k-2026-11-06.md).
+Acurácia não decide a comparação: o teste é desbalanceado. Sementes do protocolo: 0, 1 e 2, nesta ordem, compartilhadas pelos quatro braços. O marco de 4/11/2026 é a corrida do baseline. O macro F1 medido em 2026-11-02 está na [nota](cardiff-baseline-2026-11-02.md). O macro F1 do LLM medido em 2026-11-06 está na [nota do LLM](llm-gptoss20b-sub1k-2026-11-06.md). O macro F1 do Transformer medido em 2026-11-07 está na [nota do Transformer](transformer-mbert-5000-strict-2026-11-07.md).
 
 ## Divisão de tarefas
 
@@ -116,4 +118,4 @@ Acurácia não decide a comparação: o teste é desbalanceado. Sementes do prot
 | 24/11/2026 | Slides da disciplina. |
 | Depois dos slides | Artigo SBC, 8+ páginas. Entrega posterior. Não bloqueia o blueprint nem os slides. |
 
-4/11/2026 é alvo de trabalho do grupo, não prazo lido de um edital neste arquivo. O macro F1 do baseline medido em 2026-11-02 está na [nota](cardiff-baseline-2026-11-02.md). Esse primeiro F1 é o do baseline no harness compartilhado. O macro F1 do LLM medido em 2026-11-06 está na [nota do LLM](llm-gptoss20b-sub1k-2026-11-06.md).
+4/11/2026 é alvo de trabalho do grupo, não prazo lido de um edital neste arquivo. O macro F1 do baseline medido em 2026-11-02 está na [nota](cardiff-baseline-2026-11-02.md). Esse primeiro F1 é o do baseline no harness compartilhado. O macro F1 do LLM medido em 2026-11-06 está na [nota do LLM](llm-gptoss20b-sub1k-2026-11-06.md). O macro F1 do Transformer medido em 2026-11-07 está na [nota do Transformer](transformer-mbert-5000-strict-2026-11-07.md).
