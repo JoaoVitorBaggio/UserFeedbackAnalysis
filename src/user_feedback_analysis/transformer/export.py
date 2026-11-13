@@ -13,7 +13,7 @@ from typing import Any
 from user_feedback_analysis.transformer.dataset import ID_TO_LABEL, LABEL_TO_ID
 from user_feedback_analysis.transformer.model import DEFAULT_ENCODER, SatisfactionModel
 
-HF_REPO_ID = "nikname22/ufa-wildfeedback-satisfaction-mbert"
+HF_REPO_ID = "pln-ufrgs/ufa-wildfeedback-satisfaction-mbert"
 CLASSIFIER_FILENAME = "classifier_head.safetensors"
 LABEL_MAP_FILENAME = "label_map.json"
 RUN_SUMMARY_FILENAME = "run_summary.json"
