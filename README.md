@@ -4,6 +4,14 @@ Trabalho prático de PLN (INF01100, UFRGS 2026/2, Grupo 16: João Vítor Baggio 
 
 O baseline Cardiff tem macro F1 medido em 2026-11-02, sementes 0, 1 e 2: 0.4800, 0.4754 e 0.4836. A nota está em [docs/cardiff-baseline-2026-11-02.md](docs/cardiff-baseline-2026-11-02.md). O LLM `openai/gpt-oss-20b`, zero-shot e few-shot, tem macro F1 medido em 2026-11-06 na subamostra de 1000, sementes 0, 1 e 2. Zero-shot: 0.7098, 0.6834 e 0.7357. Few-shot: 0.6869, 0.7032 e 0.7370. A nota está em [docs/llm-gptoss20b-sub1k-2026-11-06.md](docs/llm-gptoss20b-sub1k-2026-11-06.md). O Transformer mBERT (`bert-base-multilingual-cased`) tem macro F1 medido em 2026-11-07 no teste completo, sementes 0, 1 e 2: 0.5844, 0.5414 e 0.5826. A nota está em [docs/transformer-mbert-5000-strict-2026-11-07.md](docs/transformer-mbert-5000-strict-2026-11-07.md). A corrida `--per-class 10000` sem strict é ablação.
 
+No Hugging Face:
+
+- Modelo (mBERT fine-tuned): [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert). Os pesos da corrida oficial (`--per-class 5000 --strict-per-class --val-size 15000`, macro F1 médio cerca de 0.57) estão em `protocol-5000/`. Os da ablação `--per-class 10000` sem strict (cerca de 0.61) estão em `ablation-perclass10000/`.
+- Resultados das corridas (JSON por semente, oficial 5000 com strict e ablação): [pln-ufrgs/ufa-transformer-protocol-5000-runs](https://huggingface.co/datasets/pln-ufrgs/ufa-transformer-protocol-5000-runs). É um repositório de dataset no Hub com os JSON de resultado, não o dado de treino.
+- Dado de treino: [microsoft/WildFeedback](https://huggingface.co/datasets/microsoft/WildFeedback), config `sat_dsat_annotation`.
+
+Notas:
+
 - [Problema, escopo e decisões](docs/definicao.md)
 - [Protocolo experimental](docs/protocolo-experimental.md)
 - [Baseline Cardiff, 2026-11-02](docs/cardiff-baseline-2026-11-02.md)
@@ -245,7 +253,7 @@ for seed in 0 1 2; do
 done
 ```
 
-A ablação usa a mesma `--val-size 15000` e troca o treino para `--per-class 10000`, sem `--strict-per-class`. SAT fica no pool inteiro (cerca de 5,1 mil). DSAT e sem sinal ficam em 10000. Não é o resultado oficial. Checkpoints e model card: [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert) (pastas `seed-0`, `seed-1`, `seed-2`). Os pesos publicados são dessa ablação. Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`. Os JSON da medição estão no dataset privado [pln-ufrgs/ufa-transformer-protocol-5000-runs](https://huggingface.co/datasets/pln-ufrgs/ufa-transformer-protocol-5000-runs).
+A ablação usa a mesma `--val-size 15000` e troca o treino para `--per-class 10000`, sem `--strict-per-class`. SAT fica no pool inteiro (cerca de 5,1 mil). DSAT e sem sinal ficam em 10000. Não é o resultado oficial. Checkpoints e model card: [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert) (pasta `ablation-perclass10000/`; os pesos oficiais estão em `protocol-5000/`). Export: `user_feedback_analysis.transformer.export`. O GitHub não guarda os pesos nem o JSON em `runs/`. Os JSON da medição estão no dataset [pln-ufrgs/ufa-transformer-protocol-5000-runs](https://huggingface.co/datasets/pln-ufrgs/ufa-transformer-protocol-5000-runs).
 
 `--encoder` troca o id; o usado entra no JSON. `--checkpoint-dir` grava o melhor `state_dict`. `--no-fp16` desliga AMP. Batch (padrão 16), `max_length` (padrão 128) e fp16 no CUDA são o limite da RTX 4060 8GB, não hiperparâmetro medido. Smoke local nessa placa, 1 época, batch 16, `max_length` 128, fp16: pico cerca de 3,4 GB alocados / 3,7 GB reservados. Se a placa recusar, baixe `--batch-size` ou `--max-length`, ou use `--grad-accum`.
 

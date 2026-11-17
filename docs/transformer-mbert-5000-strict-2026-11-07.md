@@ -1,6 +1,6 @@
 # Transformer mBERT, 5000 com strict, 2026-11-07
 
-Medição do braço Transformer. A fonte desta nota são os JSON `transformer-seed-0.json`, `transformer-seed-1.json` e `transformer-seed-2.json`, na raiz do dataset privado [pln-ufrgs/ufa-transformer-protocol-5000-runs](https://huggingface.co/datasets/pln-ufrgs/ufa-transformer-protocol-5000-runs). A ablação está na pasta `ablation-perclass10000/` desse mesmo dataset. Os números também estão no repositório de modelo [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert). Os pesos publicados nesse repositório são da corrida de 10000. Os JSON ficam fora do git.
+Medição do braço Transformer. A fonte desta nota são os JSON `transformer-seed-0.json`, `transformer-seed-1.json` e `transformer-seed-2.json`, na raiz do dataset [pln-ufrgs/ufa-transformer-protocol-5000-runs](https://huggingface.co/datasets/pln-ufrgs/ufa-transformer-protocol-5000-runs). A ablação está na pasta `ablation-perclass10000/` desse mesmo dataset. Os números também estão no repositório de modelo [pln-ufrgs/ufa-wildfeedback-satisfaction-mbert](https://huggingface.co/pln-ufrgs/ufa-wildfeedback-satisfaction-mbert). Nesse repositório, os pesos da corrida oficial estão em `protocol-5000/` e os da corrida de 10000 em `ablation-perclass10000/`. Os JSON ficam fora do git.
 
 `official_result` sai `false`. O harness grava esse flag em toda corrida que não o sobrescreve, e o `true` é regra do braço LLM. Esta nota chama de oficial a corrida do protocolo de 2026-11-07: `--per-class 5000 --strict-per-class --val-size 15000`. A corrida `--per-class 10000` sem strict é ablação. Esta nota copia as métricas medidas, na precisão em que foram registradas. O float cru do harness não entrou nesta fonte. Não é o registro do artigo.
 
@@ -59,7 +59,7 @@ O protocolo deixa o agregado das três sementes em aberto. A média e o desvio-p
 
 ## Ablação
 
-Mesma validação pedida, 15000. `--per-class 10000` sem `--strict-per-class`. SAT fica no pool inteiro, cerca de 5,1 mil. DSAT e sem sinal ficam em 10000. Esta corrida não é o resultado oficial. Os pesos publicados no repositório do modelo são dela.
+Mesma validação pedida, 15000. `--per-class 10000` sem `--strict-per-class`. SAT fica no pool inteiro, cerca de 5,1 mil. DSAT e sem sinal ficam em 10000. Esta corrida não é o resultado oficial. Os pesos dela estão em `ablation-perclass10000/` no repositório do modelo.
 
 | Semente | macro F1 | F1 SAT | F1 DSAT | F1 sem sinal |
 | --- | ---: | ---: | ---: | ---: |
